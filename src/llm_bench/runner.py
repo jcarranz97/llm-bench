@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import subprocess
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 
 def get_llama_bench_version(llama_bench: str) -> str:
@@ -58,38 +58,59 @@ def run_benchmark(
 
     cmd = [
         llama_bench,
-        "-hf", hf_repo,
-        "-p", str(n_prompt),
-        "-n", str(n_gen),
-        "-r", str(repetitions),
-        "-o", "json",
+        "-hf",
+        hf_repo,
+        "-p",
+        str(n_prompt),
+        "-n",
+        str(n_gen),
+        "-r",
+        str(repetitions),
+        "-o",
+        "json",
     ]
     if hf_token:
         cmd.extend(["-hft", hf_token])
     cmd.extend(extra_args)
 
+    # Use binary mode so we can split on \r AND \n.
+    # llama-bench uses \r for in-place progress bars which Python's text-mode
+    # line iterator never yields until a \n appears.
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
     )
 
     stderr_lines: list[str] = []
 
     def _drain() -> None:
         assert process.stderr is not None
-        for line in process.stderr:
-            stripped = line.rstrip()
-            stderr_lines.append(stripped)
-            if stripped:
-                on_status(stripped)
+        buf = bytearray()
+        while True:
+            ch = process.stderr.read(1)
+            if not ch:
+                break
+            if ch in (b"\r", b"\n"):
+                line = buf.decode("utf-8", errors="replace").strip()
+                buf.clear()
+                if line:
+                    stderr_lines.append(line)
+                    on_status(line)
+            else:
+                buf += ch
+        if buf:
+            line = buf.decode("utf-8", errors="replace").strip()
+            if line:
+                stderr_lines.append(line)
+                on_status(line)
 
     drain_thread = threading.Thread(target=_drain, daemon=True)
     drain_thread.start()
 
     assert process.stdout is not None
-    stdout_data = process.stdout.read()
+    stdout_bytes = process.stdout.read()
+    stdout_data = stdout_bytes.decode("utf-8", errors="replace")
     process.wait()
     drain_thread.join(timeout=5)
 

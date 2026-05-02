@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,7 @@ class RunMeta:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "RunMeta":
+    def from_dict(cls, d: dict[str, Any]) -> RunMeta:
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
@@ -49,7 +49,7 @@ def _ensure_dirs() -> None:
 
 
 def new_run_id() -> str:
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     salt = hashlib.sha256(ts.encode()).hexdigest()[:6]
     return f"{ts}-{salt}"
 
@@ -66,7 +66,7 @@ def make_run_meta(
 ) -> RunMeta:
     return RunMeta(
         run_id=run_id,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         hw_fingerprint=sysinfo.fingerprint,
         llama_bench_version=llama_bench_version,
         n_prompt=n_prompt,

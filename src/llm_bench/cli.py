@@ -7,7 +7,6 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
-from typing import Optional
 
 import click
 from rich.console import Console, Group
@@ -15,29 +14,27 @@ from rich.live import Live
 from rich.markup import escape
 from rich.panel import Panel
 from rich.spinner import Spinner
-from rich.table import Table
 from rich.text import Text
-from rich import box
 
-from llm_bench import __version__
+from llm_bench import __version__, storage
 from llm_bench import models as model_registry
 from llm_bench import sysinfo as sysinfo_mod
 from llm_bench.parser import BenchResult, extract_json, parse_bench_output
 from llm_bench.reporter import (
     build_compare_table,
     build_history_table,
-    build_sysinfo_panel,
     build_summary_table,
+    build_sysinfo_panel,
     compute_scores,
 )
 from llm_bench.runner import get_llama_bench_version, run_benchmark
-from llm_bench import storage
 
 console = Console()
 
 DEFAULT_LLAMA_BENCH = "/home/homelab/repos/llama.cpp/build/bin/llama-bench"
 
 # ── Root group ────────────────────────────────────────────────────────────────
+
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(__version__, "-V", "--version")
@@ -58,23 +55,32 @@ def main() -> None:
 
 # ── llm-bench run ─────────────────────────────────────────────────────────────
 
+
 @main.command()
 @click.option(
-    "--llama-bench", "-b",
+    "--llama-bench",
+    "-b",
     default=DEFAULT_LLAMA_BENCH,
     show_default=True,
     help="Path to the llama-bench binary.",
 )
 @click.option(
-    "--models-file", "-m",
+    "--models-file",
+    "-m",
     type=click.Path(exists=True, path_type=Path),
     default=None,
     help="Override auto-selected model profile with a custom YAML file.",
 )
-@click.option("--fresh", is_flag=True, default=False, help="Ignore cached results; re-run everything.")
+@click.option(
+    "--fresh", is_flag=True, default=False, help="Ignore cached results; re-run everything."
+)
 @click.option("--repetitions", "-r", default=5, show_default=True, help="Repetitions per test.")
-@click.option("--n-prompt", "-p", default=512, show_default=True, help="Prompt token count (pp test).")
-@click.option("--n-gen", "-n", default=200, show_default=True, help="Generation token count (tg test).")
+@click.option(
+    "--n-prompt", "-p", default=512, show_default=True, help="Prompt token count (pp test)."
+)
+@click.option(
+    "--n-gen", "-n", default=200, show_default=True, help="Generation token count (tg test)."
+)
 @click.option(
     "--hf-token",
     envvar="HF_TOKEN",
@@ -93,13 +99,13 @@ def main() -> None:
 @click.argument("extra_llama_args", nargs=-1, type=click.UNPROCESSED)
 def run(
     llama_bench: str,
-    models_file: Optional[Path],
+    models_file: Path | None,
     fresh: bool,
     repetitions: int,
     n_prompt: int,
     n_gen: int,
-    hf_token: Optional[str],
-    threads: Optional[int],
+    hf_token: str | None,
+    threads: int | None,
     output: str,
     extra_llama_args: tuple[str, ...],
 ) -> None:
@@ -112,7 +118,9 @@ def run(
     """
     bench_path = Path(llama_bench)
     if not bench_path.exists():
-        console.print(f"[bold red]Error:[/bold red] llama-bench not found at [cyan]{llama_bench}[/cyan]")
+        console.print(
+            f"[bold red]Error:[/bold red] llama-bench not found at [cyan]{llama_bench}[/cyan]"
+        )
         console.print("Use [bold]--llama-bench[/bold] or set the correct path.")
         sys.exit(1)
 
@@ -180,11 +188,13 @@ def run(
             header.append(_state["name"], style="bold")
             header.append(f"  {m}:{s:02d}", style="dim")
             rows.append(header)
+            log_text = Text()
             if recent_log:
-                log_text = Text()
                 for ln in recent_log:
                     log_text.append(f"  {ln}\n", style="dim cyan")
-                rows.append(Panel(log_text, border_style="dim", padding=(0, 1)))
+            else:
+                log_text.append("  waiting for llama-bench output…", style="dim")
+            rows.append(Panel(log_text, border_style="dim", padding=(0, 1)))
         return Group(*rows) if rows else Group(Text(""))
 
     class _Renderable:
@@ -208,7 +218,9 @@ def run(
                     cached_flags[model.hf_repo] = True
                     continue
 
-            _state.update({"label": label, "name": model.name, "t0": time.monotonic(), "active": True})
+            _state.update(
+                {"label": label, "name": model.name, "t0": time.monotonic(), "active": True}
+            )
             recent_log.clear()
 
             def on_status(line: str) -> None:
@@ -270,7 +282,11 @@ def run(
         )
     elif output == "json":
         payload = [
-            {**r.to_dict(), "score": scores.get(r.hf_repo), "cached": cached_flags.get(r.hf_repo, False)}
+            {
+                **r.to_dict(),
+                "score": scores.get(r.hf_repo),
+                "cached": cached_flags.get(r.hf_repo, False),
+            }
             for r in results
         ]
         console.print_json(json.dumps(payload, indent=2))
@@ -302,6 +318,7 @@ def _print_markdown_table(
 
 # ── llm-bench sysinfo ─────────────────────────────────────────────────────────
 
+
 @main.command()
 def sysinfo() -> None:
     """Show detected hardware and the model profile that would be selected."""
@@ -309,14 +326,21 @@ def sysinfo() -> None:
     profile = model_registry.select_profile(info)
     console.print(build_sysinfo_panel(info, profile.description))
     console.print()
-    console.print(f"[bold]Profile:[/bold]  [cyan]{profile.profile}[/cyan]  —  {profile.description}")
+    console.print(
+        f"[bold]Profile:[/bold]  [cyan]{profile.profile}[/cyan]  —  {profile.description}"
+    )
     console.print(f"[bold]Models :[/bold]  {len(profile.models)} models in this profile")
     for m in profile.models:
-        fit = "[green]✓[/green]" if m.estimated_size_gb < info.available_ram_gb * 0.85 else "[yellow]⚠[/yellow]"
+        fit = (
+            "[green]✓[/green]"
+            if m.estimated_size_gb < info.available_ram_gb * 0.85
+            else "[yellow]⚠[/yellow]"
+        )
         console.print(f"  {fit}  [bold]{m.name}[/bold]  [dim]~{m.estimated_size_gb:.1f} GiB[/dim]")
 
 
 # ── llm-bench models ──────────────────────────────────────────────────────────
+
 
 @main.group()
 def models() -> None:
@@ -330,11 +354,14 @@ def models_list() -> None:
         source = f"[dim]{p.source_path}[/dim]" if p.source_path else ""
         console.print(f"[bold cyan]{p.profile}[/bold cyan]  {p.description}  {source}")
         for m in p.models:
-            console.print(f"  [dim]·[/dim] {m.name}  [dim]{m.hf_repo}  ~{m.estimated_size_gb:.1f} GiB[/dim]")
+            console.print(
+                f"  [dim]·[/dim] {m.name}  [dim]{m.hf_repo}  ~{m.estimated_size_gb:.1f} GiB[/dim]"
+            )
         console.print()
 
 
 # ── llm-bench results ─────────────────────────────────────────────────────────
+
 
 @main.group()
 def results() -> None:
@@ -346,7 +373,9 @@ def results_list() -> None:
     """List all saved benchmark runs."""
     metas = storage.list_runs()
     if not metas:
-        console.print("[dim]No runs saved yet. Run [bold]llm-bench run[/bold] to get started.[/dim]")
+        console.print(
+            "[dim]No runs saved yet. Run [bold]llm-bench run[/bold] to get started.[/dim]"
+        )
         return
     console.print(build_history_table(metas))
 
@@ -365,7 +394,9 @@ def results_show(run_id: str) -> None:
     profile = model_registry.select_profile(sysinfo)
     scores = compute_scores(bench_results)
     console.print(build_summary_table(bench_results, scores, cached, profile, sysinfo))
-    console.print(f"\n[dim]Run: {run_id}  ·  {meta.timestamp[:19]}  ·  hw: {meta.hw_fingerprint}[/dim]")
+    console.print(
+        f"\n[dim]Run: {run_id}  ·  {meta.timestamp[:19]}  ·  hw: {meta.hw_fingerprint}[/dim]"
+    )
 
 
 @results.command("compare")

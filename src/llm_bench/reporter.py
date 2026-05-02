@@ -12,8 +12,8 @@ from llm_bench.parser import BenchResult
 from llm_bench.storage import RunMeta
 from llm_bench.sysinfo import SystemInfo
 
-
 # ── Scoring & rating ─────────────────────────────────────────────────────────
+
 
 def compute_scores(results: list[BenchResult]) -> dict[str, float]:
     """Return a 0–100 composite score per hf_repo. Higher = faster."""
@@ -24,8 +24,7 @@ def compute_scores(results: list[BenchResult]) -> dict[str, float]:
     max_pp = max((r.pp_avg_ts for r in valid if r.pp_avg_ts), default=1.0) or 1.0
     return {
         r.hf_repo: round(
-            0.7 * ((r.tg_avg_ts or 0) / max_tg * 100)
-            + 0.3 * ((r.pp_avg_ts or 0) / max_pp * 100),
+            0.7 * ((r.tg_avg_ts or 0) / max_tg * 100) + 0.3 * ((r.pp_avg_ts or 0) / max_pp * 100),
             1,
         )
         for r in valid
@@ -49,6 +48,7 @@ def _fit_indicator(estimated_gb: float, available_ram_gb: float) -> str:
 
 
 # ── Sysinfo panel ─────────────────────────────────────────────────────────────
+
 
 def build_sysinfo_panel(sysinfo: SystemInfo, profile_name: str) -> Panel:
     ram_bar_width = 20
@@ -80,6 +80,7 @@ def build_sysinfo_panel(sysinfo: SystemInfo, profile_name: str) -> Panel:
 
 
 # ── Main results table ────────────────────────────────────────────────────────
+
 
 def build_summary_table(
     results: list[BenchResult],
@@ -125,7 +126,16 @@ def build_summary_table(
 
         if r.error:
             table.add_row(
-                str(rank), name_cell, "—", "—", "—", "—", "—", "—", "—", "—",
+                str(rank),
+                name_cell,
+                "—",
+                "—",
+                "—",
+                "—",
+                "—",
+                "—",
+                "—",
+                "—",
                 Text.from_markup(f"[red]{r.error}[/red]"),
             )
             continue
@@ -134,16 +144,8 @@ def build_summary_table(
         fit = _fit_indicator(est_gb, sysinfo.available_ram_gb)
         score = scores.get(r.hf_repo, 0.0)
 
-        pp = (
-            f"{r.pp_avg_ts:.2f}\n±{r.pp_std_ts:.2f}"
-            if r.pp_avg_ts is not None
-            else "N/A"
-        )
-        tg = (
-            f"{r.tg_avg_ts:.2f}\n±{r.tg_std_ts:.2f}"
-            if r.tg_avg_ts is not None
-            else "N/A"
-        )
+        pp = f"{r.pp_avg_ts:.2f}\n±{r.pp_std_ts:.2f}" if r.pp_avg_ts is not None else "N/A"
+        tg = f"{r.tg_avg_ts:.2f}\n±{r.tg_std_ts:.2f}" if r.tg_avg_ts is not None else "N/A"
         size = f"{r.model_size_gib:.2f} GiB" if r.model_size_bytes else "N/A"
         params = f"{r.model_params_b:.2f} B" if r.model_n_params else "N/A"
 
@@ -165,6 +167,7 @@ def build_summary_table(
 
 
 # ── Run history table ─────────────────────────────────────────────────────────
+
 
 def build_history_table(metas: list[RunMeta]) -> Table:
     table = Table(
@@ -194,6 +197,7 @@ def build_history_table(metas: list[RunMeta]) -> Table:
 
 
 # ── Compare table ─────────────────────────────────────────────────────────────
+
 
 def build_compare_table(
     meta_a: RunMeta,
@@ -236,8 +240,12 @@ def build_compare_table(
 
         table.add_row(
             f"[bold]{r_a.model_name}[/bold]\n[dim]{r_a.hf_repo}[/dim]",
-            pp_a, pp_b, Text.from_markup(pp_delta),
-            tg_a, tg_b, Text.from_markup(tg_delta),
+            pp_a,
+            pp_b,
+            Text.from_markup(pp_delta),
+            tg_a,
+            tg_b,
+            Text.from_markup(tg_delta),
         )
     return table
 

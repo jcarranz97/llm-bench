@@ -20,19 +20,31 @@ def test_fingerprint_is_stable():
 
 def test_fingerprint_changes_with_ram():
     info_a = SystemInfo(
-        cpu_model="Intel i7", cpu_cores=8, total_ram_gb=16.0,
-        available_ram_gb=8.0, os="Linux", gpus=[]
+        cpu_model="Intel i7",
+        cpu_cores=8,
+        total_ram_gb=16.0,
+        available_ram_gb=8.0,
+        os="Linux",
+        gpus=[],
     )
     info_b = SystemInfo(
-        cpu_model="Intel i7", cpu_cores=8, total_ram_gb=32.0,
-        available_ram_gb=8.0, os="Linux", gpus=[]
+        cpu_model="Intel i7",
+        cpu_cores=8,
+        total_ram_gb=32.0,
+        available_ram_gb=8.0,
+        os="Linux",
+        gpus=[],
     )
     assert info_a.fingerprint != info_b.fingerprint
 
 
 def test_has_gpu_false_when_no_gpus():
     info = SystemInfo(
-        cpu_model="Intel i7", cpu_cores=8, total_ram_gb=16.0,
-        available_ram_gb=8.0, os="Linux", gpus=[]
+        cpu_model="Intel i7",
+        cpu_cores=8,
+        total_ram_gb=16.0,
+        available_ram_gb=8.0,
+        os="Linux",
+        gpus=[],
     )
     assert not info.has_gpu
