@@ -1,0 +1,35 @@
+profile: medium_ram
+description: "Systems with 8–16 GB RAM — a balance of quality and speed"
+min_ram_gb: 8
+max_ram_gb: 16
+
+models:
+  - name: "Gemma 4 2B (ggml-org)"
+    hf_repo: "ggml-org/gemma-4-E2B-it-GGUF"
+    estimated_size_gb: 1.5
+    description: "Lightweight Gemma 4 multimodal model"
+    tags: [small, fast, gemma]
+
+  - name: "Gemma 4 2B RotorQuant Q4_K_M"
+    hf_repo: "majentik/gemma-4-E2B-it-RotorQuant-GGUF-Q4_K_M"
+    estimated_size_gb: 1.2
+    description: "Quantized Gemma 4 2B — smaller footprint, similar quality"
+    tags: [small, quantized, gemma]
+
+  - name: "Gemma 4 4B (ggml-org)"
+    hf_repo: "ggml-org/gemma-4-E4B-it-GGUF"
+    estimated_size_gb: 4.95
+    description: "Larger Gemma 4 variant with better reasoning quality"
+    tags: [medium, gemma]
+
+  - name: "Qwen2.5 7B (ggml-org)"
+    hf_repo: "ggml-org/Qwen2.5-7B-Instruct-GGUF"
+    estimated_size_gb: 4.7
+    description: "Strong 7B instruction model from Alibaba"
+    tags: [medium, qwen]
+
+  - name: "Llama 3.2 3B (ggml-org)"
+    hf_repo: "ggml-org/Llama-3.2-3B-Instruct-GGUF"
+    estimated_size_gb: 2.0
+    description: "Meta's compact Llama 3.2 instruction model"
+    tags: [small, llama]

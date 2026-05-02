@@ -1,0 +1,35 @@
+profile: high_ram
+description: "Systems with 16 GB+ RAM — larger models for better quality"
+min_ram_gb: 16
+max_ram_gb: 9999
+
+models:
+  - name: "Gemma 4 4B (ggml-org)"
+    hf_repo: "ggml-org/gemma-4-E4B-it-GGUF"
+    estimated_size_gb: 4.95
+    description: "Gemma 4 4B — solid quality at moderate size"
+    tags: [medium, gemma]
+
+  - name: "Qwen2.5 7B (ggml-org)"
+    hf_repo: "ggml-org/Qwen2.5-7B-Instruct-GGUF"
+    estimated_size_gb: 4.7
+    description: "Strong 7B instruction model from Alibaba"
+    tags: [medium, qwen]
+
+  - name: "Llama 3.1 8B (ggml-org)"
+    hf_repo: "ggml-org/Meta-Llama-3.1-8B-Instruct-GGUF"
+    estimated_size_gb: 5.4
+    description: "Meta's flagship 8B model — excellent instruction following"
+    tags: [medium, llama]
+
+  - name: "Gemma 3 12B (ggml-org)"
+    hf_repo: "ggml-org/gemma-3-12b-it-GGUF"
+    estimated_size_gb: 8.1
+    description: "12B Gemma 3 — strong general-purpose model"
+    tags: [large, gemma]
+
+  - name: "Qwen2.5 14B (ggml-org)"
+    hf_repo: "ggml-org/Qwen2.5-14B-Instruct-GGUF"
+    estimated_size_gb: 9.3
+    description: "14B Qwen2.5 — excellent reasoning and coding"
+    tags: [large, qwen]

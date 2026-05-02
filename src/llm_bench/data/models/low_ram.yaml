@@ -1,0 +1,29 @@
+profile: low_ram
+description: "Systems with less than 8 GB RAM — small, efficient models only"
+min_ram_gb: 0
+max_ram_gb: 8
+
+models:
+  - name: "Gemma 3 1B (ggml-org)"
+    hf_repo: "ggml-org/gemma-3-1b-it-GGUF"
+    estimated_size_gb: 0.8
+    description: "Tiny Gemma 3 — fits comfortably in very low RAM"
+    tags: [tiny, fast, gemma]
+
+  - name: "Qwen2.5 0.5B (ggml-org)"
+    hf_repo: "ggml-org/Qwen2.5-0.5B-Instruct-GGUF"
+    estimated_size_gb: 0.4
+    description: "Smallest Qwen2.5 model, great for RAM-constrained systems"
+    tags: [tiny, fast, qwen]
+
+  - name: "Gemma 4 2B (ggml-org)"
+    hf_repo: "ggml-org/gemma-4-E2B-it-GGUF"
+    estimated_size_gb: 1.5
+    description: "Lightweight Gemma 4 multimodal model"
+    tags: [small, gemma]
+
+  - name: "Qwen2.5 1.5B (ggml-org)"
+    hf_repo: "ggml-org/Qwen2.5-1.5B-Instruct-GGUF"
+    estimated_size_gb: 1.0
+    description: "Small but capable Qwen2.5 instruction model"
+    tags: [small, qwen]

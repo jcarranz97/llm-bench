@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llm-bench"
+version = "0.1.0"
+description = "Real local LLM benchmarks — like canirun.ai but on your hardware"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["llm", "benchmark", "llama.cpp", "performance", "ai"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Environment :: Console",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Benchmark",
+]
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "psutil>=5.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/jcarranz/llm-bench"
+Repository = "https://github.com/jcarranz/llm-bench"
+Issues = "https://github.com/jcarranz/llm-bench/issues"
+
+[project.scripts]
+llm-bench = "llm_bench.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llm_bench"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "types-pyyaml",
+    "types-psutil",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+addopts = "-p no:launch_testing -p no:launch_testing_ros_pytest_entrypoint -p no:ament_copyright -p no:ament_flake8 -p no:ament_lint -p no:ament_pep257 -p no:ament_xmllint"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
