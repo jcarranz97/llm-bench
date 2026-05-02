@@ -83,7 +83,7 @@ def run_benchmark(
             stripped = line.rstrip()
             stderr_lines.append(stripped)
             if stripped:
-                on_status(stripped[:120])
+                on_status(stripped)
 
     drain_thread = threading.Thread(target=_drain, daemon=True)
     drain_thread.start()

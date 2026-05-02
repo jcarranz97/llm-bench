@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import json
 import sys
+import time
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
 import click
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
+from rich.markup import escape
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.spinner import Spinner
 from rich.table import Table
+from rich.text import Text
 from rich import box
 
 from llm_bench import __version__
@@ -155,35 +160,59 @@ def run(
     cached_flags: dict[str, bool] = {}
     total = len(profile.models)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=False,
-    ) as progress:
+    completed_lines: list[str] = []
+    recent_log: deque[str] = deque(maxlen=6)
+    _state: dict = {"label": "", "name": "", "t0": 0.0, "active": False}
+    _spinner = Spinner("dots", style="bold cyan")
+
+    def _make_live() -> Group:
+        rows: list = []
+        for ln in completed_lines:
+            rows.append(Text.from_markup(ln))
+        if _state["active"]:
+            elapsed = time.monotonic() - _state["t0"]
+            m, s = divmod(int(elapsed), 60)
+            frame = _spinner.render(time.monotonic())
+            header = Text()
+            header.append("  ")
+            header.append_text(frame)
+            header.append(f"  {_state['label']} ", style="dim")
+            header.append(_state["name"], style="bold")
+            header.append(f"  {m}:{s:02d}", style="dim")
+            rows.append(header)
+            if recent_log:
+                log_text = Text()
+                for ln in recent_log:
+                    log_text.append(f"  {ln}\n", style="dim cyan")
+                rows.append(Panel(log_text, border_style="dim", padding=(0, 1)))
+        return Group(*rows) if rows else Group(Text(""))
+
+    class _Renderable:
+        def __rich__(self) -> Group:  # type: ignore[override]
+            return _make_live()
+
+    with Live(_Renderable(), console=console, refresh_per_second=8):
         for idx, model in enumerate(profile.models):
-            label = f"\\[{idx + 1}/{total}]"
+            label = f"[{idx + 1}/{total}]"
+            markup_label = f"\\[{idx + 1}/{total}]"
 
             # ── Cache lookup ──────────────────────────────────────────────
             if not fresh:
                 cached = storage.find_cached_result(meta, model.hf_repo)
                 if cached is not None:
-                    console.print(
-                        f"  {label} [dim]↩ cached[/dim]  [bold]{model.name}[/bold]"
+                    completed_lines.append(
+                        f"  {markup_label} [dim]↩ cached[/dim]  [bold]{escape(model.name)}[/bold]"
                         f"  TG={cached.tg_avg_ts:.2f} t/s"
                     )
                     results.append(cached)
                     cached_flags[model.hf_repo] = True
                     continue
 
-            task_id = progress.add_task(
-                f"{label} [bold]{model.name}[/bold]  [dim]starting…[/dim]",
-                total=None,
-            )
+            _state.update({"label": label, "name": model.name, "t0": time.monotonic(), "active": True})
+            recent_log.clear()
 
-            def on_status(line: str, _tid=task_id, _lbl=label, _name=model.name) -> None:
-                progress.update(_tid, description=f"{_lbl} [bold]{_name}[/bold]  [dim]{line}[/dim]")
+            def on_status(line: str) -> None:
+                recent_log.append(line[:200])
 
             stdout, stderr, returncode = run_benchmark(
                 llama_bench=llama_bench,
@@ -196,6 +225,9 @@ def run(
                 on_status=on_status,
             )
 
+            _state["active"] = False
+            recent_log.clear()
+
             if returncode != 0:
                 last_err = stderr.strip().splitlines()[-1] if stderr.strip() else "unknown error"
                 result = BenchResult(
@@ -203,28 +235,26 @@ def run(
                     hf_repo=model.hf_repo,
                     error=f"exit {returncode}: {last_err[:70]}",
                 )
-                progress.update(
-                    task_id,
-                    description=f"{label} [red]✗[/red] [bold]{model.name}[/bold]  [red]failed[/red]",
+                completed_lines.append(
+                    f"  {markup_label} [red]✗[/red] [bold]{escape(model.name)}[/bold]  [red]failed[/red]"
                 )
             else:
                 json_data = extract_json(stdout)
                 result = parse_bench_output(model.name, model.hf_repo, json_data)
                 if result.error:
-                    progress.update(
-                        task_id,
-                        description=f"{label} [yellow]⚠[/yellow] [bold]{model.name}[/bold]  [yellow]{result.error}[/yellow]",
+                    completed_lines.append(
+                        f"  {markup_label} [yellow]⚠[/yellow] [bold]{escape(model.name)}[/bold]"
+                        f"  [yellow]{escape(result.error)}[/yellow]"
                     )
                 else:
                     tg_str = f"{result.tg_avg_ts:.2f} t/s" if result.tg_avg_ts else "?"
-                    progress.update(
-                        task_id,
-                        description=f"{label} [green]✓[/green] [bold]{model.name}[/bold]  TG={tg_str}",
+                    completed_lines.append(
+                        f"  {markup_label} [green]✓[/green] [bold]{escape(model.name)}[/bold]"
+                        f"  TG={tg_str}"
                     )
 
             results.append(result)
             cached_flags[model.hf_repo] = False
-            progress.stop_task(task_id)
 
     # ── Compute scores and display ────────────────────────────────────────
     scores = compute_scores(results)
