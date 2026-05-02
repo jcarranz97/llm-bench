@@ -126,6 +126,7 @@ def find_cached_result(meta: RunMeta, hf_repo: str) -> BenchResult | None:
     Search previous runs for a result with the same hardware + config + model.
     Returns the most recent matching BenchResult, or None.
     """
+    _ensure_dirs()
     target_key = meta.model_cache_key(hf_repo)
     for run_dir in sorted(_RESULTS_DIR.iterdir(), reverse=True):
         other_meta_file = run_dir / "meta.json"
