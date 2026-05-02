@@ -18,11 +18,12 @@ class GpuInfo:
 @dataclass
 class SystemInfo:
     cpu_model: str
-    cpu_cores: int
+    cpu_cores: int  # logical threads
     total_ram_gb: float
     available_ram_gb: float
     os: str
     gpus: list[GpuInfo] = field(default_factory=list)
+    cpu_physical_cores: int = 0  # physical cores (0 = unknown)
 
     @property
     def has_gpu(self) -> bool:
@@ -109,6 +110,7 @@ def collect() -> SystemInfo:
 
     cpu_model = _detect_cpu_model()
     cpu_cores = psutil.cpu_count(logical=True) or 1
+    cpu_physical_cores = psutil.cpu_count(logical=False) or 0
     mem = psutil.virtual_memory()
     total_ram_gb = mem.total / (1024**3)
     available_ram_gb = mem.available / (1024**3)
@@ -119,6 +121,7 @@ def collect() -> SystemInfo:
     return SystemInfo(
         cpu_model=cpu_model,
         cpu_cores=cpu_cores,
+        cpu_physical_cores=cpu_physical_cores,
         total_ram_gb=total_ram_gb,
         available_ram_gb=available_ram_gb,
         os=os_name,

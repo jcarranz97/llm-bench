@@ -7,6 +7,8 @@ def test_collect_returns_sysinfo():
     info = collect()
     assert isinstance(info, SystemInfo)
     assert info.cpu_cores > 0
+    assert info.cpu_physical_cores >= 0
+    assert info.cpu_physical_cores <= info.cpu_cores
     assert info.total_ram_gb > 0
     assert info.available_ram_gb > 0
     assert info.available_ram_gb <= info.total_ram_gb

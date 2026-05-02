@@ -69,8 +69,13 @@ def build_sysinfo_panel(sysinfo: SystemInfo, profile_name: str) -> Panel:
     else:
         gpu_lines = "  [dim]No GPU detected — running on CPU[/dim]"
 
+    if sysinfo.cpu_physical_cores > 0:
+        cpu_detail = f"({sysinfo.cpu_physical_cores} cores, {sysinfo.cpu_cores} threads)"
+    else:
+        cpu_detail = f"({sysinfo.cpu_cores} threads)"
+
     content = (
-        f"[bold]CPU[/bold]  {sysinfo.cpu_model}  [dim]({sysinfo.cpu_cores} threads)[/dim]\n"
+        f"[bold]CPU[/bold]  {sysinfo.cpu_model}  [dim]{cpu_detail}[/dim]\n"
         f"[bold]RAM[/bold]  {ram_line}\n"
         f"[bold]GPU[/bold]\n{gpu_lines}\n"
         f"[bold]OS [/bold]  {sysinfo.os}\n"
