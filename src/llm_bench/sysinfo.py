@@ -37,14 +37,34 @@ class SystemInfo:
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+def _proc_cpuinfo_model() -> str:
+    """Read CPU model name from /proc/cpuinfo (Linux/WSL)."""
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
 def _detect_cpu_model() -> str:
     try:
         import cpuinfo  # type: ignore[import-untyped]
 
         info = cpuinfo.get_cpu_info()
-        return str(info.get("brand_raw", platform.processor() or "Unknown CPU"))
+        brand = str(info.get("brand_raw", ""))
+        # py-cpuinfo sometimes returns the arch string (e.g. "x86_64") on WSL;
+        # treat that as a miss and fall through to /proc/cpuinfo.
+        if brand and brand not in ("x86_64", "aarch64", "arm64"):
+            return brand
     except ImportError:
         pass
+
+    if name := _proc_cpuinfo_model():
+        return name
+
     return platform.processor() or "Unknown CPU"
 
 
