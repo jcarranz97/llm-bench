@@ -10,8 +10,8 @@ models:
     description: "Tiny Gemma 3 — fits comfortably in very low RAM"
     tags: [tiny, fast, gemma]
 
-  - name: "Qwen2.5 0.5B (ggml-org)"
-    hf_repo: "ggml-org/Qwen2.5-0.5B-Instruct-GGUF"
+  - name: "Qwen2.5 0.5B (Qwen)"
+    hf_repo: "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
     estimated_size_gb: 0.4
     description: "Smallest Qwen2.5 model, great for RAM-constrained systems"
     tags: [tiny, fast, qwen]
@@ -22,8 +22,8 @@ models:
     description: "Lightweight Gemma 4 multimodal model"
     tags: [small, gemma]
 
-  - name: "Qwen2.5 1.5B (ggml-org)"
-    hf_repo: "ggml-org/Qwen2.5-1.5B-Instruct-GGUF"
+  - name: "Qwen2.5 1.5B (Qwen)"
+    hf_repo: "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
     estimated_size_gb: 1.0
     description: "Small but capable Qwen2.5 instruction model"
     tags: [small, qwen]
