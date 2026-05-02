@@ -29,7 +29,10 @@ class RunMeta:
     model_count: int
 
     def config_fingerprint(self) -> str:
-        raw = f"{self.hw_fingerprint}:{self.n_prompt}:{self.n_gen}:{self.repetitions}:{self.llama_bench_version}"
+        raw = (
+            f"{self.hw_fingerprint}:{self.n_prompt}:{self.n_gen}"
+            f":{self.repetitions}:{self.llama_bench_version}"
+        )
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def model_cache_key(self, hf_repo: str) -> str:

@@ -183,7 +183,7 @@ def run(
             frame = _spinner.render(time.monotonic())
             header = Text()
             header.append("  ")
-            header.append_text(frame)
+            header.append_text(frame)  # type: ignore[arg-type]
             header.append(f"  {_state['label']} ", style="dim")
             header.append(_state["name"], style="bold")
             header.append(f"  {m}:{s:02d}", style="dim")
@@ -248,7 +248,8 @@ def run(
                     error=f"exit {returncode}: {last_err[:70]}",
                 )
                 completed_lines.append(
-                    f"  {markup_label} [red]✗[/red] [bold]{escape(model.name)}[/bold]  [red]failed[/red]"
+                    f"  {markup_label} [red]✗[/red] [bold]{escape(model.name)}[/bold]"
+                    "  [red]failed[/red]"
                 )
             else:
                 json_data = extract_json(stdout)

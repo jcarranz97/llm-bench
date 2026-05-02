@@ -14,9 +14,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "network: mark test as requiring network access")
 
 
-def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item]
-) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     if config.getoption("--network"):
         return
     skip_network = pytest.mark.skip(reason="pass --network to run HuggingFace checks")

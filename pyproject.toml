@@ -42,6 +42,7 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.4",
     "mypy>=1.10",
+    "pyright>=1.1",
     "types-pyyaml",
     "types-psutil",
 ]

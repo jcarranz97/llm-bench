@@ -5,7 +5,6 @@ Run with:  PYTHONPATH="" uv run pytest tests/test_hf_repos.py --network -v
 
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import pytest
 
@@ -16,7 +15,7 @@ _HF_API = "https://huggingface.co/api/models/{repo}"
 # Collect (model_name, yaml_profile, hf_repo) for every entry in every bundled profile.
 # Deduplicate by hf_repo so the same repo appearing in multiple profiles only runs once.
 _seen: set[str] = set()
-_REPO_PARAMS: list[pytest.param] = []
+_REPO_PARAMS = []
 for _profile in _bundled_profiles():
     for _model in _profile.models:
         if _model.hf_repo not in _seen:
