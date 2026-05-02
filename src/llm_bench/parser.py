@@ -34,7 +34,7 @@ class BenchResult:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "BenchResult":
+    def from_dict(cls, d: dict[str, Any]) -> BenchResult:
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
@@ -60,7 +60,9 @@ def extract_json(text: str) -> list[dict[str, Any]]:
     return []
 
 
-def parse_bench_output(model_name: str, hf_repo: str, json_data: list[dict[str, Any]]) -> BenchResult:
+def parse_bench_output(
+    model_name: str, hf_repo: str, json_data: list[dict[str, Any]]
+) -> BenchResult:
     result = BenchResult(model_name=model_name, hf_repo=hf_repo)
     if not json_data:
         result.error = "No data returned"

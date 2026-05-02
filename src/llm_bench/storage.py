@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,10 @@ class RunMeta:
     model_count: int
 
     def config_fingerprint(self) -> str:
-        raw = f"{self.hw_fingerprint}:{self.n_prompt}:{self.n_gen}:{self.repetitions}:{self.llama_bench_version}"
+        raw = (
+            f"{self.hw_fingerprint}:{self.n_prompt}:{self.n_gen}"
+            f":{self.repetitions}:{self.llama_bench_version}"
+        )
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def model_cache_key(self, hf_repo: str) -> str:
@@ -40,7 +43,7 @@ class RunMeta:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "RunMeta":
+    def from_dict(cls, d: dict[str, Any]) -> RunMeta:
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
@@ -49,7 +52,7 @@ def _ensure_dirs() -> None:
 
 
 def new_run_id() -> str:
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     salt = hashlib.sha256(ts.encode()).hexdigest()[:6]
     return f"{ts}-{salt}"
 
@@ -66,7 +69,7 @@ def make_run_meta(
 ) -> RunMeta:
     return RunMeta(
         run_id=run_id,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         hw_fingerprint=sysinfo.fingerprint,
         llama_bench_version=llama_bench_version,
         n_prompt=n_prompt,
@@ -126,6 +129,7 @@ def find_cached_result(meta: RunMeta, hf_repo: str) -> BenchResult | None:
     Search previous runs for a result with the same hardware + config + model.
     Returns the most recent matching BenchResult, or None.
     """
+    _ensure_dirs()
     target_key = meta.model_cache_key(hf_repo)
     for run_dir in sorted(_RESULTS_DIR.iterdir(), reverse=True):
         other_meta_file = run_dir / "meta.json"

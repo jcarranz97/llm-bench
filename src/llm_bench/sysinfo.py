@@ -18,11 +18,12 @@ class GpuInfo:
 @dataclass
 class SystemInfo:
     cpu_model: str
-    cpu_cores: int
+    cpu_cores: int  # logical threads
     total_ram_gb: float
     available_ram_gb: float
     os: str
     gpus: list[GpuInfo] = field(default_factory=list)
+    cpu_physical_cores: int = 0  # physical cores (0 = unknown)
 
     @property
     def has_gpu(self) -> bool:
@@ -36,14 +37,34 @@ class SystemInfo:
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+def _proc_cpuinfo_model() -> str:
+    """Read CPU model name from /proc/cpuinfo (Linux/WSL)."""
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
 def _detect_cpu_model() -> str:
     try:
         import cpuinfo  # type: ignore[import-untyped]
 
         info = cpuinfo.get_cpu_info()
-        return str(info.get("brand_raw", platform.processor() or "Unknown CPU"))
+        brand = str(info.get("brand_raw", ""))
+        # py-cpuinfo sometimes returns the arch string (e.g. "x86_64") on WSL;
+        # treat that as a miss and fall through to /proc/cpuinfo.
+        if brand and brand not in ("x86_64", "aarch64", "arm64"):
+            return brand
     except ImportError:
         pass
+
+    if name := _proc_cpuinfo_model():
+        return name
+
     return platform.processor() or "Unknown CPU"
 
 
@@ -109,6 +130,7 @@ def collect() -> SystemInfo:
 
     cpu_model = _detect_cpu_model()
     cpu_cores = psutil.cpu_count(logical=True) or 1
+    cpu_physical_cores = psutil.cpu_count(logical=False) or 0
     mem = psutil.virtual_memory()
     total_ram_gb = mem.total / (1024**3)
     available_ram_gb = mem.available / (1024**3)
@@ -119,6 +141,7 @@ def collect() -> SystemInfo:
     return SystemInfo(
         cpu_model=cpu_model,
         cpu_cores=cpu_cores,
+        cpu_physical_cores=cpu_physical_cores,
         total_ram_gb=total_ram_gb,
         available_ram_gb=available_ram_gb,
         os=os_name,

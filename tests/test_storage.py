@@ -1,6 +1,5 @@
 """Tests for llm_bench.storage (uses tmp_path, never touches ~/.llm-bench)."""
 
-import json
 from pathlib import Path
 
 import pytest
@@ -76,7 +75,9 @@ def test_find_cached_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert found.tg_avg_ts == 12.0
 
 
-def test_find_cached_result_miss_on_hw_change(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_find_cached_result_miss_on_hw_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("llm_bench.storage._RESULTS_DIR", tmp_path / "results")
 
     meta_old = _make_meta()

@@ -1,8 +1,10 @@
 # llm-bench
 
-**Real local LLM benchmarks — like [canirun.ai](https://www.canirun.ai) but on your actual hardware.**
+**Real LLM benchmarks on your own hardware — inspired by [canirun.ai](https://www.canirun.ai).**
 
-`canirun.ai` shows theoretical estimates based on spec sheets. `llm-bench` runs real benchmarks using [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-bench` tool, detects your hardware automatically, picks an appropriate set of models, and produces a ranked comparison table with cached results so you never re-run a model unnecessarily.
+`llm-bench` was inspired by [canirun.ai](https://www.canirun.ai): after seeing what models are estimated to run on your system, the natural next step is to measure how they actually perform on your specific machine. This tool does exactly that — it uses [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-bench` to run real benchmarks, auto-detects your hardware, picks a suitable set of models, and caches results so re-runs are instant.
+
+Think of it as a hands-on complement: check what `canirun.ai` says fits your hardware, then use `llm-bench` to get real numbers on your machine with any model you want to try.
 
 ```
 System Info
