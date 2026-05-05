@@ -505,12 +505,18 @@ def run(
             if env_overrides
             else ""
         )
+        cli_extras_line = (
+            f"\n[dim]extras:[/dim]  {' '.join(extra)}  [dim](applied to every model)[/dim]"
+            if extra
+            else ""
+        )
         header_top = (
             f"[bold cyan]Benchmark Run[/bold cyan]  [dim]{run_id}[/dim]\n"
             f"[dim]binary:[/dim]  {llama_bench}  [dim]({bench_version})[/dim]\n"
             f"[dim]config:[/dim]  pp={n_prompt}  tg={n_gen}  rep={repetitions}"
             + ("  [yellow](--fresh)[/yellow]" if fresh else "")
             + env_line
+            + cli_extras_line
         )
     console.print(Panel.fit(header_top, border_style="cyan"))
     console.print()
@@ -570,10 +576,15 @@ def run(
             slot = f"[{idx + 1}/{total}]"
             markup_slot = f"\\[{idx + 1}/{total}]"
             ident = model.identifier
+            # Per-model YAML extras come first; CLI/positional extras can override.
+            # Only meaningful for the llama-bench backend — the HTTP backends ignore them.
+            effective_extras = (
+                list(model.extra_args) + list(extra) if backend == "llama-bench" else []
+            )
 
             # ── Cache lookup ──────────────────────────────────────────────
             if not fresh:
-                cached = storage.find_cached_result(meta, ident)
+                cached = storage.find_cached_result(meta, ident, effective_extras)
                 if cached is not None:
                     tg_disp = f"{cached.tg_avg_ts:.2f}" if cached.tg_avg_ts else "?"
                     completed_lines.append(
@@ -623,7 +634,7 @@ def run(
                     n_gen=n_gen,
                     repetitions=repetitions,
                     hf_token=hf_token,
-                    extra_args=extra,
+                    extra_args=effective_extras,
                     on_status=on_status,
                     env_vars=env_overrides or None,
                 )
@@ -639,6 +650,8 @@ def run(
                 else:
                     json_data = extract_json(stdout)
                     result = parse_bench_output(model.name, ident, json_data)
+                # Persist the extras so future cache lookups can re-key off them.
+                result.extra_args = list(effective_extras)
 
             _state["active"] = False
             recent_log.clear()

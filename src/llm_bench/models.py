@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.resources
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,6 +23,7 @@ class Model:
     estimated_size_gb: float = 0.0
     description: str = ""
     tags: list[str] = field(default_factory=list)
+    extra_args: list[str] = field(default_factory=list)
 
     @property
     def identifier(self) -> str:
@@ -56,6 +58,16 @@ def _load_yaml(path: Path) -> ModelProfile:
                 f"Model entry '{m.get('name', '?')}' in {path} must specify "
                 "at least one of hf_repo / lm_studio_id / local_path"
             )
+        raw_extras = m.get("extra_args", []) or []
+        if isinstance(raw_extras, str):
+            extra_args = shlex.split(raw_extras)
+        elif isinstance(raw_extras, list):
+            extra_args = [str(a) for a in raw_extras]
+        else:
+            raise ValueError(
+                f"Model entry '{m.get('name', '?')}' in {path}: extra_args must be a "
+                f"list or string, got {type(raw_extras).__name__}"
+            )
         models.append(
             Model(
                 name=m["name"],
@@ -65,6 +77,7 @@ def _load_yaml(path: Path) -> ModelProfile:
                 estimated_size_gb=float(m.get("estimated_size_gb", 0)),
                 description=m.get("description", ""),
                 tags=m.get("tags", []),
+                extra_args=extra_args,
             )
         )
     return ModelProfile(

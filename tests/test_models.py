@@ -57,7 +57,83 @@ models:
   - name: NoId
 """,
     )
-    with pytest.raises(ValueError, match="hf_repo / lm_studio_id"):
+    with pytest.raises(ValueError, match="hf_repo / lm_studio_id / local_path"):
+        load_profile_from_file(yaml_path)
+
+
+def test_loader_accepts_extra_args_as_list(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "p.yaml"
+    _write_yaml(
+        yaml_path,
+        """
+profile: test
+description: x
+min_ram_gb: 0
+max_ram_gb: 9999
+models:
+  - name: BigMoE
+    hf_repo: org/big-moe-gguf
+    extra_args: ["-ngl", "30", "-fa", "1"]
+""",
+    )
+    profile = load_profile_from_file(yaml_path)
+    assert profile.models[0].extra_args == ["-ngl", "30", "-fa", "1"]
+
+
+def test_loader_accepts_extra_args_as_string(tmp_path: Path) -> None:
+    """A single string is shlex-split — convenient for short YAML."""
+    yaml_path = tmp_path / "p.yaml"
+    _write_yaml(
+        yaml_path,
+        """
+profile: test
+description: x
+min_ram_gb: 0
+max_ram_gb: 9999
+models:
+  - name: Tuned
+    hf_repo: org/tuned
+    extra_args: "-ngl 30 -fa 1"
+""",
+    )
+    profile = load_profile_from_file(yaml_path)
+    assert profile.models[0].extra_args == ["-ngl", "30", "-fa", "1"]
+
+
+def test_loader_extra_args_default_empty(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "p.yaml"
+    _write_yaml(
+        yaml_path,
+        """
+profile: test
+description: x
+min_ram_gb: 0
+max_ram_gb: 9999
+models:
+  - name: Plain
+    hf_repo: org/plain
+""",
+    )
+    profile = load_profile_from_file(yaml_path)
+    assert profile.models[0].extra_args == []
+
+
+def test_loader_extra_args_rejects_non_list_non_string(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "p.yaml"
+    _write_yaml(
+        yaml_path,
+        """
+profile: test
+description: x
+min_ram_gb: 0
+max_ram_gb: 9999
+models:
+  - name: Bad
+    hf_repo: org/bad
+    extra_args: 42
+""",
+    )
+    with pytest.raises(ValueError, match="extra_args must be a list or string"):
         load_profile_from_file(yaml_path)
 
 

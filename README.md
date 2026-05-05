@@ -310,6 +310,48 @@ uv tool install llm_bench-0.1.0-py3-none-any.whl
 pip install llm_bench-0.1.0-py3-none-any.whl
 ```
 
+## FAQ
+
+### Why does a model that loads fine in LM Studio / `llama-cli` fail with `failed to create context with model` in llm-bench?
+
+You'll see something like this in the results table:
+
+```
+[1/1] ⚠ Qwen3.6-35B-A3B  exit 1: main: error: failed to create context with model '…'
+```
+
+This is **llm-bench-specific** — or, more precisely, specific to the `llama-bench` backend. It happens when the model is too big to fully offload onto your GPU(s).
+
+**Why it's specific to llama-bench:** the underlying `llama-bench` binary defaults to `-ngl 99`, meaning *put every layer on the GPU*. `llama-cli` and LM Studio do not — `llama-cli` defaults to `-ngl 0` (CPU only) unless you pass `-ngl`, and LM Studio auto-picks how many layers fit. So a 21 GB Q4 model loads fine in LM Studio on a 20 GB GPU (it offloads a partial set of layers and keeps the rest on CPU), but the same model in llama-bench tries to put all 21 GB on a 20 GB device and fails during context allocation.
+
+**Fix:** pass `-fitt <margin_MiB>` through to llama-bench so it auto-fits the model to available VRAM with the given margin (in MiB) per device:
+
+```bash
+# Auto-fit the model to fit your GPU with 1 GB headroom
+uv run llm-bench run \
+  --env HIP_VISIBLE_DEVICES=0 \
+  --llama-bench /path/to/llama.cpp/build/bin/llama-bench \
+  -- -fitt 1024
+```
+
+Anything after the bare `--` is forwarded verbatim to `llama-bench`. Bump the margin if you still OOM on the smaller end, or lower it (e.g. `-fitt 256`) if you want to maximize VRAM usage. See `llama-bench --help` for related flags (`-fitc`, `-ngl`, `-ncmoe`).
+
+**Make it permanent for a specific model** by adding `extra_args` to your YAML profile (see [Custom Model Profiles](#custom-model-profiles)):
+
+```yaml
+models:
+  - name: "Qwen3.6-35B-A3B"
+    hf_repo: "lmstudio-community/Qwen3.6-35B-A3B-GGUF"
+    estimated_size_gb: 21.0
+    extra_args: ["-fitt", "1024"]   # auto-fit; per-model
+```
+
+The `extra_args` field shards the result cache, so cached results from a run with different `extra_args` won't bleed into your tuned run.
+
+### Why does the same error not happen with `--backend lm-studio` or `--backend llama-server`?
+
+Those backends drive an already-loaded model on a server you started yourself. Whatever offload / context decisions LM Studio or `llama-server` made at startup are baked in by the time llm-bench connects. The `llama-bench` backend, by contrast, spawns a fresh subprocess per model, and that's where llama-bench's `-ngl 99` default bites you.
+
 ## License
 
 MIT

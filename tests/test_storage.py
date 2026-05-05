@@ -147,6 +147,70 @@ def test_env_vars_order_independent() -> None:
     assert a.config_fingerprint() == b.config_fingerprint()
 
 
+def test_extra_args_isolate_cache_key() -> None:
+    """Different extra_args (e.g. -ngl 30 vs -ngl 99) must produce distinct keys."""
+    meta = _make_meta()
+    k_off = meta.model_cache_key("org/m", ["-ngl", "30"])
+    k_full = meta.model_cache_key("org/m", ["-ngl", "99"])
+    k_none = meta.model_cache_key("org/m")
+    assert k_off != k_full != k_none
+    assert k_off != k_none
+
+
+def test_extra_args_empty_keeps_old_cache_key() -> None:
+    """No extras means no suffix: pre-extras runs still hit cache."""
+    meta = _make_meta()
+    legacy = meta.model_cache_key("org/m")
+    new_no_extras = meta.model_cache_key("org/m", [])
+    assert legacy == new_no_extras
+
+
+def test_extra_args_order_matters() -> None:
+    """`-ngl 30 -fa 1` and `-fa 1 -ngl 30` are semantically the same to llama-bench
+    but we treat them as distinct cache entries — order is whatever the user wrote."""
+    meta = _make_meta()
+    a = meta.model_cache_key("org/m", ["-ngl", "30", "-fa", "1"])
+    b = meta.model_cache_key("org/m", ["-fa", "1", "-ngl", "30"])
+    assert a != b
+
+
+def test_find_cached_result_isolates_by_extra_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run with -ngl 30 must NOT pick up a cached result that ran with -ngl 99."""
+    monkeypatch.setattr("llm_bench.storage._RESULTS_DIR", tmp_path / "results")
+
+    meta = _make_meta()
+    # Save a prior result with extras = -ngl 99
+    prior = _make_result()
+    prior.extra_args = ["-ngl", "99"]
+    save_run(meta, [prior], {"org/model-a": False})
+
+    # Lookup with same extras → hit
+    assert (
+        find_cached_result(meta, "org/model-a", ["-ngl", "99"]) is not None
+    )
+    # Lookup with different extras → miss
+    assert find_cached_result(meta, "org/model-a", ["-ngl", "30"]) is None
+    # Lookup with no extras → miss (prior was tagged with extras)
+    assert find_cached_result(meta, "org/model-a") is None
+
+
+def test_find_cached_result_legacy_no_extras_still_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-extras saved result (extra_args=[]) must still hit a no-extras lookup."""
+    monkeypatch.setattr("llm_bench.storage._RESULTS_DIR", tmp_path / "results")
+
+    meta = _make_meta()
+    save_run(meta, [_make_result()], {"org/model-a": False})  # extra_args defaults to []
+
+    assert find_cached_result(meta, "org/model-a") is not None
+    assert find_cached_result(meta, "org/model-a", []) is not None
+    # …but if the new lookup wants extras, the legacy result must NOT match.
+    assert find_cached_result(meta, "org/model-a", ["-ngl", "30"]) is None
+
+
 def test_label_isolates_two_machines() -> None:
     """Two LM Studio runs that differ only in `label` must NOT collide."""
     a = _make_meta()
