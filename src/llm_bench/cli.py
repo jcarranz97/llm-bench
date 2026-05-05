@@ -49,8 +49,28 @@ def _is_local_url(url: str) -> bool:
 
 
 def _models_from_csv(models_csv: str) -> list[Model]:
+    """LM Studio: every CSV entry is a model id."""
     ids = [m.strip() for m in models_csv.split(",") if m.strip()]
     return [Model(name=i, lm_studio_id=i) for i in ids]
+
+
+def _llama_bench_models_from_csv(models_csv: str) -> list[Model]:
+    """llama-bench: each CSV entry is either a local GGUF path or an HF repo.
+
+    Detection rule: an entry is treated as a local file if it exists on disk OR
+    its name ends in `.gguf`. Everything else is forwarded to `-hf` as-is.
+    """
+    out: list[Model] = []
+    for raw in (m.strip() for m in models_csv.split(",")):
+        if not raw:
+            continue
+        p = Path(raw).expanduser()
+        is_local = p.suffix.lower() == ".gguf" or p.is_file()
+        if is_local:
+            out.append(Model(name=p.name or raw, local_path=str(p)))
+        else:
+            out.append(Model(name=raw, hf_repo=raw))
+    return out
 
 
 def _ad_hoc_profile(models: list[Model], name: str = "ad-hoc") -> ModelProfile:
@@ -139,7 +159,9 @@ def main() -> None:
     "--models",
     "models_csv",
     default=None,
-    help="Comma-separated LM Studio model IDs to benchmark, overrides profile.",
+    help="Comma-separated models to benchmark, overrides the auto-selected profile. "
+    "For --backend lm-studio: model IDs. For --backend llama-bench: local GGUF paths "
+    "(detected by .gguf suffix or existing file) or HuggingFace repo IDs.",
 )
 @click.option(
     "--all-available",
@@ -408,9 +430,23 @@ def run(
             )
             console.print("Use [bold]--llama-bench[/bold] or set the correct path.")
             sys.exit(1)
+        if all_available or loaded_only:
+            console.print(
+                "[bold red]Error:[/bold red] --all-available and --loaded-only are LM Studio "
+                "concepts and don't apply to --backend llama-bench. Use --models, "
+                "--models-file, or rely on the auto-selected profile."
+            )
+            sys.exit(1)
+        if sum([bool(models_csv), bool(models_file)]) > 1:
+            console.print(
+                "[bold red]Error:[/bold red] use only one of --models / --models-file."
+            )
+            sys.exit(1)
         if threads is not None:
             extra.extend(["-t", str(threads)])
-        if models_file:
+        if models_csv:
+            profile = _ad_hoc_profile(_llama_bench_models_from_csv(models_csv))
+        elif models_file:
             profile = model_registry.load_profile_from_file(models_file)
         else:
             profile = model_registry.select_profile(sysinfo)
@@ -581,7 +617,8 @@ def run(
             else:
                 stdout, stderr, returncode = run_benchmark(
                     llama_bench=llama_bench,
-                    hf_repo=ident,
+                    hf_repo="" if model.local_path else ident,
+                    local_path=model.local_path,
                     n_prompt=n_prompt,
                     n_gen=n_gen,
                     repetitions=repetitions,

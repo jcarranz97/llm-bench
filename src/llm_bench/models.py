@@ -18,14 +18,19 @@ class Model:
     name: str
     hf_repo: str = ""
     lm_studio_id: str = ""
+    local_path: str = ""
     estimated_size_gb: float = 0.0
     description: str = ""
     tags: list[str] = field(default_factory=list)
 
     @property
     def identifier(self) -> str:
-        """Stable per-model identifier across backends (LM Studio id, else HF repo)."""
-        return self.lm_studio_id or self.hf_repo
+        """Stable per-model identifier across backends.
+
+        Priority: LM Studio id → HF repo → local GGUF path. The runner uses
+        this string as both the cache key and the display id.
+        """
+        return self.lm_studio_id or self.hf_repo or self.local_path
 
 
 @dataclass
@@ -45,16 +50,18 @@ def _load_yaml(path: Path) -> ModelProfile:
     for m in data.get("models", []):
         hf_repo = m.get("hf_repo", "") or ""
         lm_studio_id = m.get("lm_studio_id", "") or ""
-        if not hf_repo and not lm_studio_id:
+        local_path = m.get("local_path", "") or ""
+        if not hf_repo and not lm_studio_id and not local_path:
             raise ValueError(
                 f"Model entry '{m.get('name', '?')}' in {path} must specify "
-                "at least one of hf_repo / lm_studio_id"
+                "at least one of hf_repo / lm_studio_id / local_path"
             )
         models.append(
             Model(
                 name=m["name"],
                 hf_repo=hf_repo,
                 lm_studio_id=lm_studio_id,
+                local_path=local_path,
                 estimated_size_gb=float(m.get("estimated_size_gb", 0)),
                 description=m.get("description", ""),
                 tags=m.get("tags", []),
