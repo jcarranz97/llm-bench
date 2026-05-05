@@ -64,6 +64,26 @@ def _ad_hoc_profile(models: list[Model], name: str = "ad-hoc") -> ModelProfile:
     )
 
 
+def _parse_env_overrides(pairs: tuple[str, ...]) -> dict[str, str]:
+    """Parse repeated `--env KEY=VALUE` flags into a dict. Errors via Click."""
+    out: dict[str, str] = {}
+    for pair in pairs:
+        if "=" not in pair:
+            raise click.BadParameter(
+                f"--env value must be KEY=VALUE, got {pair!r}",
+                param_hint="--env",
+            )
+        key, value = pair.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise click.BadParameter(
+                f"--env key must be non-empty, got {pair!r}",
+                param_hint="--env",
+            )
+        out[key] = value
+    return out
+
+
 # ── Root group ────────────────────────────────────────────────────────────────
 
 
@@ -165,6 +185,15 @@ def main() -> None:
 )
 @click.option("--threads", "-t", default=None, type=int, help="CPU thread count for llama-bench.")
 @click.option(
+    "--env",
+    "env_pairs",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Set an env var for the llama-bench subprocess (repeatable). "
+    "Example: --env HIP_VISIBLE_DEVICES=0 to pin to the first AMD GPU. "
+    "Env-var overrides shard the result cache so different settings don't collide.",
+)
+@click.option(
     "--output",
     "-o",
     type=click.Choice(["table", "json", "markdown"], case_sensitive=False),
@@ -189,6 +218,7 @@ def run(
     n_gen: int,
     hf_token: str | None,
     threads: int | None,
+    env_pairs: tuple[str, ...],
     output: str,
     extra_llama_args: tuple[str, ...],
 ) -> None:
@@ -214,6 +244,13 @@ def run(
     """
     backend = backend.lower()
     extra: list[str] = list(extra_llama_args)
+    env_overrides = _parse_env_overrides(env_pairs)
+    if env_overrides and backend != "llama-bench":
+        console.print(
+            "[bold red]Error:[/bold red] --env is only meaningful with "
+            "--backend llama-bench (HTTP backends run in a remote process)."
+        )
+        sys.exit(1)
 
     # ── Backend-specific setup ────────────────────────────────────────────
     sysinfo = sysinfo_mod.collect()
@@ -377,7 +414,7 @@ def run(
             profile = model_registry.load_profile_from_file(models_file)
         else:
             profile = model_registry.select_profile(sysinfo)
-        bench_version = get_llama_bench_version(llama_bench)
+        bench_version = get_llama_bench_version(llama_bench, env_overrides or None)
         hw_fingerprint = None
         loaded_ids = set()
 
@@ -413,6 +450,7 @@ def run(
         server_url=server_url if is_http_backend else None,
         label=label if is_http_backend else None,
         hw_fingerprint_override=hw_fingerprint,
+        env_vars=env_overrides or None,
     )
 
     if is_http_backend:
@@ -425,11 +463,18 @@ def run(
             + ("  [yellow](--fresh)[/yellow]" if fresh else "")
         )
     else:
+        env_line = (
+            "\n[dim]env:[/dim]     "
+            + " ".join(f"{k}={v}" for k, v in sorted(env_overrides.items()))
+            if env_overrides
+            else ""
+        )
         header_top = (
             f"[bold cyan]Benchmark Run[/bold cyan]  [dim]{run_id}[/dim]\n"
             f"[dim]binary:[/dim]  {llama_bench}  [dim]({bench_version})[/dim]\n"
             f"[dim]config:[/dim]  pp={n_prompt}  tg={n_gen}  rep={repetitions}"
             + ("  [yellow](--fresh)[/yellow]" if fresh else "")
+            + env_line
         )
     console.print(Panel.fit(header_top, border_style="cyan"))
     console.print()
@@ -543,6 +588,7 @@ def run(
                     hf_token=hf_token,
                     extra_args=extra,
                     on_status=on_status,
+                    env_vars=env_overrides or None,
                 )
                 if returncode != 0:
                     last_err = (

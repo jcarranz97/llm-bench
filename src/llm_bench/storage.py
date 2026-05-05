@@ -30,6 +30,7 @@ class RunMeta:
     backend: str = "llama-bench"
     server_url: str | None = None
     label: str | None = None
+    env_vars: dict[str, str] | None = None
 
     def config_fingerprint(self) -> str:
         raw = (
@@ -39,6 +40,11 @@ class RunMeta:
         # Append new fields only when non-default so old llama-bench cache keys stay stable.
         if self.backend != "llama-bench" or self.label or self.server_url:
             raw += f":{self.backend}:{self.label or ''}:{self.server_url or ''}"
+        # Env-var overrides change runtime behavior (e.g. HIP_VISIBLE_DEVICES picks
+        # a different GPU), so they must shard the cache. Sort for stability.
+        if self.env_vars:
+            env_str = ",".join(f"{k}={v}" for k, v in sorted(self.env_vars.items()))
+            raw += f":env={env_str}"
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def model_cache_key(self, hf_repo: str) -> str:
@@ -76,6 +82,7 @@ def make_run_meta(
     server_url: str | None = None,
     label: str | None = None,
     hw_fingerprint_override: str | None = None,
+    env_vars: dict[str, str] | None = None,
 ) -> RunMeta:
     return RunMeta(
         run_id=run_id,
@@ -90,6 +97,7 @@ def make_run_meta(
         backend=backend,
         server_url=server_url,
         label=label,
+        env_vars=env_vars or None,
     )
 
 

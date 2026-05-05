@@ -122,6 +122,31 @@ def test_backend_changes_cache_key() -> None:
     assert base.config_fingerprint() != lm.config_fingerprint()
 
 
+def test_env_vars_isolate_cache_key() -> None:
+    """HIP_VISIBLE_DEVICES=0 vs =1 must NOT share cached results."""
+    a = _make_meta()
+    a.env_vars = {"HIP_VISIBLE_DEVICES": "0"}
+    b = RunMeta(**{**a.__dict__, "env_vars": {"HIP_VISIBLE_DEVICES": "1"}})
+    assert a.model_cache_key("org/model-a") != b.model_cache_key("org/model-a")
+
+
+def test_empty_env_vars_keeps_old_cache_key() -> None:
+    """Adding env_vars=None or {} must NOT change the cache key for existing runs."""
+    base = _make_meta()
+    with_empty = RunMeta(**{**base.__dict__, "env_vars": {}})
+    with_none = RunMeta(**{**base.__dict__, "env_vars": None})
+    assert base.config_fingerprint() == with_empty.config_fingerprint()
+    assert base.config_fingerprint() == with_none.config_fingerprint()
+
+
+def test_env_vars_order_independent() -> None:
+    """Two equivalent env dicts in different insertion orders must hash the same."""
+    a = _make_meta()
+    a.env_vars = {"HIP_VISIBLE_DEVICES": "0", "OTHER": "x"}
+    b = RunMeta(**{**a.__dict__, "env_vars": {"OTHER": "x", "HIP_VISIBLE_DEVICES": "0"}})
+    assert a.config_fingerprint() == b.config_fingerprint()
+
+
 def test_label_isolates_two_machines() -> None:
     """Two LM Studio runs that differ only in `label` must NOT collide."""
     a = _make_meta()
