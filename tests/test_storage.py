@@ -97,3 +97,156 @@ def test_find_cached_result_miss_on_hw_change(
     )
     found = find_cached_result(meta_new, "org/model-a")
     assert found is None
+
+
+def test_default_backend_keeps_old_cache_key() -> None:
+    """Adding 'backend' field with default value must NOT change existing cache keys."""
+    meta = _make_meta()
+    # The old formula was sha256(hw:n_prompt:n_gen:rep:version)[:16].
+    # When backend == 'llama-bench' (default) and label/server_url are unset,
+    # the new formula must produce the same hash.
+    import hashlib
+
+    expected_raw = (
+        f"{meta.hw_fingerprint}:{meta.n_prompt}:{meta.n_gen}"
+        f":{meta.repetitions}:{meta.llama_bench_version}"
+    )
+    expected = hashlib.sha256(expected_raw.encode()).hexdigest()[:16]
+    assert meta.config_fingerprint() == expected
+
+
+def test_backend_changes_cache_key() -> None:
+    """Switching backend to 'lm-studio' must produce a different cache key."""
+    base = _make_meta()
+    lm = RunMeta(**{**base.__dict__, "backend": "lm-studio"})
+    assert base.config_fingerprint() != lm.config_fingerprint()
+
+
+def test_env_vars_isolate_cache_key() -> None:
+    """HIP_VISIBLE_DEVICES=0 vs =1 must NOT share cached results."""
+    a = _make_meta()
+    a.env_vars = {"HIP_VISIBLE_DEVICES": "0"}
+    b = RunMeta(**{**a.__dict__, "env_vars": {"HIP_VISIBLE_DEVICES": "1"}})
+    assert a.model_cache_key("org/model-a") != b.model_cache_key("org/model-a")
+
+
+def test_empty_env_vars_keeps_old_cache_key() -> None:
+    """Adding env_vars=None or {} must NOT change the cache key for existing runs."""
+    base = _make_meta()
+    with_empty = RunMeta(**{**base.__dict__, "env_vars": {}})
+    with_none = RunMeta(**{**base.__dict__, "env_vars": None})
+    assert base.config_fingerprint() == with_empty.config_fingerprint()
+    assert base.config_fingerprint() == with_none.config_fingerprint()
+
+
+def test_env_vars_order_independent() -> None:
+    """Two equivalent env dicts in different insertion orders must hash the same."""
+    a = _make_meta()
+    a.env_vars = {"HIP_VISIBLE_DEVICES": "0", "OTHER": "x"}
+    b = RunMeta(**{**a.__dict__, "env_vars": {"OTHER": "x", "HIP_VISIBLE_DEVICES": "0"}})
+    assert a.config_fingerprint() == b.config_fingerprint()
+
+
+def test_extra_args_isolate_cache_key() -> None:
+    """Different extra_args (e.g. -ngl 30 vs -ngl 99) must produce distinct keys."""
+    meta = _make_meta()
+    k_off = meta.model_cache_key("org/m", ["-ngl", "30"])
+    k_full = meta.model_cache_key("org/m", ["-ngl", "99"])
+    k_none = meta.model_cache_key("org/m")
+    assert k_off != k_full != k_none
+    assert k_off != k_none
+
+
+def test_extra_args_empty_keeps_old_cache_key() -> None:
+    """No extras means no suffix: pre-extras runs still hit cache."""
+    meta = _make_meta()
+    legacy = meta.model_cache_key("org/m")
+    new_no_extras = meta.model_cache_key("org/m", [])
+    assert legacy == new_no_extras
+
+
+def test_extra_args_order_matters() -> None:
+    """`-ngl 30 -fa 1` and `-fa 1 -ngl 30` are semantically the same to llama-bench
+    but we treat them as distinct cache entries — order is whatever the user wrote."""
+    meta = _make_meta()
+    a = meta.model_cache_key("org/m", ["-ngl", "30", "-fa", "1"])
+    b = meta.model_cache_key("org/m", ["-fa", "1", "-ngl", "30"])
+    assert a != b
+
+
+def test_find_cached_result_isolates_by_extra_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run with -ngl 30 must NOT pick up a cached result that ran with -ngl 99."""
+    monkeypatch.setattr("llm_bench.storage._RESULTS_DIR", tmp_path / "results")
+
+    meta = _make_meta()
+    # Save a prior result with extras = -ngl 99
+    prior = _make_result()
+    prior.extra_args = ["-ngl", "99"]
+    save_run(meta, [prior], {"org/model-a": False})
+
+    # Lookup with same extras → hit
+    assert find_cached_result(meta, "org/model-a", ["-ngl", "99"]) is not None
+    # Lookup with different extras → miss
+    assert find_cached_result(meta, "org/model-a", ["-ngl", "30"]) is None
+    # Lookup with no extras → miss (prior was tagged with extras)
+    assert find_cached_result(meta, "org/model-a") is None
+
+
+def test_find_cached_result_legacy_no_extras_still_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-extras saved result (extra_args=[]) must still hit a no-extras lookup."""
+    monkeypatch.setattr("llm_bench.storage._RESULTS_DIR", tmp_path / "results")
+
+    meta = _make_meta()
+    save_run(meta, [_make_result()], {"org/model-a": False})  # extra_args defaults to []
+
+    assert find_cached_result(meta, "org/model-a") is not None
+    assert find_cached_result(meta, "org/model-a", []) is not None
+    # …but if the new lookup wants extras, the legacy result must NOT match.
+    assert find_cached_result(meta, "org/model-a", ["-ngl", "30"]) is None
+
+
+def test_label_isolates_two_machines() -> None:
+    """Two LM Studio runs that differ only in `label` must NOT collide."""
+    a = _make_meta()
+    a.backend = "lm-studio"
+    a.label = "desktop"
+    a.server_url = "http://localhost:1234"
+
+    b = RunMeta(**{**a.__dict__, "label": "homelab"})
+    assert a.model_cache_key("qwen/qwen3-4b") != b.model_cache_key("qwen/qwen3-4b")
+
+
+def test_old_meta_json_loads_without_new_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run saved before backend/server_url/label existed must still load."""
+    import json as _json
+
+    monkeypatch.setattr("llm_bench.storage._RESULTS_DIR", tmp_path / "results")
+    run_dir = tmp_path / "results" / "old-run"
+    run_dir.mkdir(parents=True)
+    legacy_meta = {
+        "run_id": "old-run",
+        "timestamp": "2024-01-01T00:00:00+00:00",
+        "hw_fingerprint": "abc123",
+        "llama_bench_version": "build 9000",
+        "n_prompt": 512,
+        "n_gen": 200,
+        "repetitions": 5,
+        "profile_name": "medium_ram",
+        "model_count": 1,
+    }
+    (run_dir / "meta.json").write_text(_json.dumps(legacy_meta))
+    (run_dir / "results.json").write_text("[]")
+
+    from llm_bench.storage import load_run
+
+    meta, results, _cached = load_run("old-run")
+    assert meta.run_id == "old-run"
+    assert meta.backend == "llama-bench"  # default fills in
+    assert meta.label is None
+    assert results == []

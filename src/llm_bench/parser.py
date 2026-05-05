@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -21,6 +21,7 @@ class BenchResult:
     tg_avg_ts: float | None = None
     tg_std_ts: float | None = None
     error: str | None = None
+    extra_args: list[str] = field(default_factory=list)
 
     @property
     def model_size_gib(self) -> float:

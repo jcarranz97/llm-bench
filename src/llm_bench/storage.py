@@ -27,16 +27,33 @@ class RunMeta:
     repetitions: int
     profile_name: str
     model_count: int
+    backend: str = "llama-bench"
+    server_url: str | None = None
+    label: str | None = None
+    env_vars: dict[str, str] | None = None
 
     def config_fingerprint(self) -> str:
         raw = (
             f"{self.hw_fingerprint}:{self.n_prompt}:{self.n_gen}"
             f":{self.repetitions}:{self.llama_bench_version}"
         )
+        # Append new fields only when non-default so old llama-bench cache keys stay stable.
+        if self.backend != "llama-bench" or self.label or self.server_url:
+            raw += f":{self.backend}:{self.label or ''}:{self.server_url or ''}"
+        # Env-var overrides change runtime behavior (e.g. HIP_VISIBLE_DEVICES picks
+        # a different GPU), so they must shard the cache. Sort for stability.
+        if self.env_vars:
+            env_str = ",".join(f"{k}={v}" for k, v in sorted(self.env_vars.items()))
+            raw += f":env={env_str}"
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
-    def model_cache_key(self, hf_repo: str) -> str:
+    def model_cache_key(self, hf_repo: str, extra_args: tuple[str, ...] | list[str] = ()) -> str:
+        """Per-model cache key. `extra_args` are forwarded to llama-bench (e.g.
+        `-ngl 30`) and change results, so they shard the key. Empty extras
+        produce no suffix — keeping pre-extras cache keys stable."""
         raw = self.config_fingerprint() + ":" + hf_repo
+        if extra_args:
+            raw += ":extras=" + " ".join(extra_args)
         return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,17 +83,26 @@ def make_run_meta(
     repetitions: int,
     profile_name: str,
     model_count: int,
+    backend: str = "llama-bench",
+    server_url: str | None = None,
+    label: str | None = None,
+    hw_fingerprint_override: str | None = None,
+    env_vars: dict[str, str] | None = None,
 ) -> RunMeta:
     return RunMeta(
         run_id=run_id,
         timestamp=datetime.now(UTC).isoformat(),
-        hw_fingerprint=sysinfo.fingerprint,
+        hw_fingerprint=hw_fingerprint_override or sysinfo.fingerprint,
         llama_bench_version=llama_bench_version,
         n_prompt=n_prompt,
         n_gen=n_gen,
         repetitions=repetitions,
         profile_name=profile_name,
         model_count=model_count,
+        backend=backend,
+        server_url=server_url,
+        label=label,
+        env_vars=env_vars or None,
     )
 
 
@@ -124,13 +150,21 @@ def list_runs() -> list[RunMeta]:
     return metas
 
 
-def find_cached_result(meta: RunMeta, hf_repo: str) -> BenchResult | None:
+def find_cached_result(
+    meta: RunMeta,
+    hf_repo: str,
+    extra_args: tuple[str, ...] | list[str] = (),
+) -> BenchResult | None:
     """
-    Search previous runs for a result with the same hardware + config + model.
-    Returns the most recent matching BenchResult, or None.
+    Search previous runs for a result with the same hardware + config + model
+    + extra_args. Returns the most recent matching BenchResult, or None.
+
+    Each prior result is re-keyed using its OWN stored extra_args (legacy
+    results predating the field default to []), so a lookup with no extras
+    only matches results saved with no extras, and vice versa.
     """
     _ensure_dirs()
-    target_key = meta.model_cache_key(hf_repo)
+    target_key = meta.model_cache_key(hf_repo, extra_args)
     for run_dir in sorted(_RESULTS_DIR.iterdir(), reverse=True):
         other_meta_file = run_dir / "meta.json"
         results_file = run_dir / "results.json"
@@ -138,13 +172,14 @@ def find_cached_result(meta: RunMeta, hf_repo: str) -> BenchResult | None:
             continue
         try:
             other_meta = RunMeta.from_dict(json.loads(other_meta_file.read_text()))
-            other_key = other_meta.model_cache_key(hf_repo)
-            if other_key == target_key:
-                for d in json.loads(results_file.read_text()):
-                    d.pop("_cached", None)
-                    r = BenchResult.from_dict(d)
-                    if r.hf_repo == hf_repo and r.error is None:
-                        return r
+            for d in json.loads(results_file.read_text()):
+                d.pop("_cached", None)
+                r = BenchResult.from_dict(d)
+                if r.hf_repo != hf_repo or r.error is not None:
+                    continue
+                other_key = other_meta.model_cache_key(hf_repo, tuple(r.extra_args))
+                if other_key == target_key:
+                    return r
         except Exception:
             continue
     return None
