@@ -27,12 +27,18 @@ class RunMeta:
     repetitions: int
     profile_name: str
     model_count: int
+    backend: str = "llama-bench"
+    server_url: str | None = None
+    label: str | None = None
 
     def config_fingerprint(self) -> str:
         raw = (
             f"{self.hw_fingerprint}:{self.n_prompt}:{self.n_gen}"
             f":{self.repetitions}:{self.llama_bench_version}"
         )
+        # Append new fields only when non-default so old llama-bench cache keys stay stable.
+        if self.backend != "llama-bench" or self.label or self.server_url:
+            raw += f":{self.backend}:{self.label or ''}:{self.server_url or ''}"
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def model_cache_key(self, hf_repo: str) -> str:
@@ -66,17 +72,24 @@ def make_run_meta(
     repetitions: int,
     profile_name: str,
     model_count: int,
+    backend: str = "llama-bench",
+    server_url: str | None = None,
+    label: str | None = None,
+    hw_fingerprint_override: str | None = None,
 ) -> RunMeta:
     return RunMeta(
         run_id=run_id,
         timestamp=datetime.now(UTC).isoformat(),
-        hw_fingerprint=sysinfo.fingerprint,
+        hw_fingerprint=hw_fingerprint_override or sysinfo.fingerprint,
         llama_bench_version=llama_bench_version,
         n_prompt=n_prompt,
         n_gen=n_gen,
         repetitions=repetitions,
         profile_name=profile_name,
         model_count=model_count,
+        backend=backend,
+        server_url=server_url,
+        label=label,
     )
 
 

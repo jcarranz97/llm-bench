@@ -94,7 +94,7 @@ def build_summary_table(
     profile: ModelProfile,
     sysinfo: SystemInfo,
 ) -> Table:
-    model_size_map = {m.hf_repo: m.estimated_size_gb for m in profile.models}
+    model_size_map = {m.identifier: m.estimated_size_gb for m in profile.models}
 
     table = Table(
         title="[bold]LLM Benchmark Results[/bold]",
@@ -184,15 +184,24 @@ def build_history_table(metas: list[RunMeta]) -> Table:
     )
     table.add_column("Run ID", style="bold", no_wrap=True)
     table.add_column("Timestamp", no_wrap=True)
+    table.add_column("Backend", no_wrap=True)
+    table.add_column("Target", no_wrap=True)
     table.add_column("Profile", no_wrap=True)
     table.add_column("Models", justify="right")
     table.add_column("HW Fingerprint", style="dim", no_wrap=True)
-    table.add_column("llama-bench", style="dim")
+    table.add_column("Version", style="dim")
 
     for m in metas:
+        backend = m.backend or "llama-bench"
+        if backend == "lm-studio":
+            target = m.label or m.server_url or "local"
+        else:
+            target = "local"
         table.add_row(
             m.run_id,
             m.timestamp[:19].replace("T", " "),
+            backend,
+            target,
             m.profile_name,
             str(m.model_count),
             m.hw_fingerprint,

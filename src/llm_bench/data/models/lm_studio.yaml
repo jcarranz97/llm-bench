@@ -1,0 +1,37 @@
+profile: lm_studio
+description: "LM Studio HTTP backend — common 2026-era models loaded via LM Studio"
+min_ram_gb: 0
+max_ram_gb: 9999
+
+# Edit this list (or pass --models) to match the model IDs actually loaded in LM Studio.
+# Find your IDs with:  curl http://localhost:1234/api/v1/models | jq '.data[].id'
+models:
+  - name: "Qwen 3 4B"
+    lm_studio_id: "qwen/qwen3-4b"
+    estimated_size_gb: 2.5
+    description: "Compact Qwen 3 model, good general-purpose chat"
+    tags: [small, qwen]
+
+  - name: "Llama 3.2 3B Instruct"
+    lm_studio_id: "meta-llama-3.2-3b-instruct"
+    estimated_size_gb: 2.0
+    description: "Meta's Llama 3.2 3B instruction-tuned"
+    tags: [small, llama]
+
+  - name: "Gemma 3 4B"
+    lm_studio_id: "google/gemma-3-4b"
+    estimated_size_gb: 2.6
+    description: "Google's Gemma 3 4B"
+    tags: [small, gemma]
+
+  - name: "Qwen 3 8B"
+    lm_studio_id: "qwen/qwen3-8b"
+    estimated_size_gb: 4.8
+    description: "Mid-size Qwen 3 — better reasoning, still GPU-friendly"
+    tags: [medium, qwen]
+
+  - name: "Llama 3.1 8B Instruct"
+    lm_studio_id: "meta-llama-3.1-8b-instruct"
+    estimated_size_gb: 4.7
+    description: "Llama 3.1 8B instruction-tuned"
+    tags: [medium, llama]

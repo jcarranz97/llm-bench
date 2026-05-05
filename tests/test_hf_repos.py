@@ -18,16 +18,17 @@ _seen: set[str] = set()
 _REPO_PARAMS = []
 for _profile in _bundled_profiles():
     for _model in _profile.models:
-        if _model.hf_repo not in _seen:
-            _seen.add(_model.hf_repo)
-            _REPO_PARAMS.append(
-                pytest.param(
-                    _model.hf_repo,
-                    _model.name,
-                    _profile.profile,
-                    id=_model.hf_repo,
-                )
+        if not _model.hf_repo or _model.hf_repo in _seen:
+            continue
+        _seen.add(_model.hf_repo)
+        _REPO_PARAMS.append(
+            pytest.param(
+                _model.hf_repo,
+                _model.name,
+                _profile.profile,
+                id=_model.hf_repo,
             )
+        )
 
 
 @pytest.mark.network

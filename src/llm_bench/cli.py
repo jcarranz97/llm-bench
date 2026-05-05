@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import time
 from collections import deque
 from pathlib import Path
+from urllib.parse import urlparse
 
 import click
 from rich.console import Console, Group
@@ -19,6 +21,9 @@ from rich.text import Text
 from llm_bench import __version__, storage
 from llm_bench import models as model_registry
 from llm_bench import sysinfo as sysinfo_mod
+from llm_bench.lm_studio import LMStudioClient, LMStudioError
+from llm_bench.lm_studio_runner import run_lm_studio_benchmark
+from llm_bench.models import Model, ModelProfile
 from llm_bench.parser import BenchResult, extract_json, parse_bench_output
 from llm_bench.reporter import (
     build_compare_table,
@@ -32,6 +37,28 @@ from llm_bench.runner import get_llama_bench_version, run_benchmark
 console = Console()
 
 DEFAULT_LLAMA_BENCH = "/home/homelab/repos/llama.cpp/build/bin/llama-bench"
+DEFAULT_LM_STUDIO_URL = "http://localhost:1234"
+
+
+def _is_local_url(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host in ("localhost", "127.0.0.1", "::1", "")
+
+
+def _models_from_csv(models_csv: str) -> list[Model]:
+    ids = [m.strip() for m in models_csv.split(",") if m.strip()]
+    return [Model(name=i, lm_studio_id=i) for i in ids]
+
+
+def _ad_hoc_profile(models: list[Model], name: str = "ad-hoc") -> ModelProfile:
+    return ModelProfile(
+        profile=name,
+        description="ad-hoc model list from --models",
+        min_ram_gb=0,
+        max_ram_gb=9999,
+        models=models,
+        source_path=None,
+    )
 
 # ── Root group ────────────────────────────────────────────────────────────────
 
@@ -58,11 +85,55 @@ def main() -> None:
 
 @main.command()
 @click.option(
+    "--backend",
+    type=click.Choice(["llama-bench", "lm-studio"], case_sensitive=False),
+    default="llama-bench",
+    show_default=True,
+    help="Which backend to drive: local llama-bench binary, or LM Studio HTTP server.",
+)
+@click.option(
+    "--server-url",
+    default=DEFAULT_LM_STUDIO_URL,
+    show_default=True,
+    help="LM Studio base URL (only used with --backend lm-studio).",
+)
+@click.option(
+    "--label",
+    default=None,
+    help="Label for the machine running LM Studio (e.g. 'desktop', 'homelab'). "
+    "Required when --server-url is non-localhost. Used in cache keys + reports.",
+)
+@click.option(
+    "--probe",
+    type=click.Choice(["pp-tg", "single"], case_sensitive=False),
+    default="pp-tg",
+    show_default=True,
+    help="LM Studio probe: 'pp-tg' mirrors llama-bench, 'single' is one realistic prompt.",
+)
+@click.option(
+    "--models",
+    "models_csv",
+    default=None,
+    help="Comma-separated LM Studio model IDs to benchmark, overrides profile.",
+)
+@click.option(
+    "--all-available",
+    is_flag=True,
+    default=False,
+    help="LM Studio: benchmark every LLM the server knows about (loaded or downloadable).",
+)
+@click.option(
+    "--loaded-only",
+    is_flag=True,
+    default=False,
+    help="LM Studio: benchmark only models currently loaded in memory.",
+)
+@click.option(
     "--llama-bench",
     "-b",
     default=DEFAULT_LLAMA_BENCH,
     show_default=True,
-    help="Path to the llama-bench binary.",
+    help="Path to the llama-bench binary (only used with --backend llama-bench).",
 )
 @click.option(
     "--models-file",
@@ -98,6 +169,13 @@ def main() -> None:
 )
 @click.argument("extra_llama_args", nargs=-1, type=click.UNPROCESSED)
 def run(
+    backend: str,
+    server_url: str,
+    label: str | None,
+    probe: str,
+    models_csv: str | None,
+    all_available: bool,
+    loaded_only: bool,
     llama_bench: str,
     models_file: Path | None,
     fresh: bool,
@@ -115,32 +193,139 @@ def run(
 
     \b
         llm-bench run -- -fa 1 -ngl 32
+
+    LM Studio examples:
+
+    \b
+        llm-bench run --backend lm-studio
+        llm-bench run --backend lm-studio --probe single --repetitions 3
+        llm-bench run --backend lm-studio --server-url http://homelab:1234 --label homelab
     """
-    bench_path = Path(llama_bench)
-    if not bench_path.exists():
-        console.print(
-            f"[bold red]Error:[/bold red] llama-bench not found at [cyan]{llama_bench}[/cyan]"
-        )
-        console.print("Use [bold]--llama-bench[/bold] or set the correct path.")
-        sys.exit(1)
-
+    backend = backend.lower()
     extra: list[str] = list(extra_llama_args)
-    if threads is not None:
-        extra.extend(["-t", str(threads)])
 
-    # ── Hardware detection ────────────────────────────────────────────────
+    # ── Backend-specific setup ────────────────────────────────────────────
     sysinfo = sysinfo_mod.collect()
+    lm_client: LMStudioClient | None = None
 
-    # ── Model profile selection ───────────────────────────────────────────
-    if models_file:
-        profile = model_registry.load_profile_from_file(models_file)
+    if backend == "lm-studio":
+        is_local = _is_local_url(server_url)
+        if not is_local and not label:
+            console.print(
+                "[bold red]Error:[/bold red] --label is required when --server-url is "
+                "not localhost (so results from different boxes don't collide)."
+            )
+            sys.exit(1)
+        if sum([bool(models_csv), bool(models_file), all_available, loaded_only]) > 1:
+            console.print(
+                "[bold red]Error:[/bold red] use only one of --models / --models-file / "
+                "--all-available / --loaded-only."
+            )
+            sys.exit(1)
+
+        lm_client = LMStudioClient(server_url)
+        try:
+            lm_client.list_models()  # connectivity probe
+        except LMStudioError as e:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+            sys.exit(1)
+        loaded_ids_list = lm_client.loaded_model_ids()
+        loaded_ids = set(loaded_ids_list)
+
+        # Pick a profile
+        if models_csv:
+            profile = _ad_hoc_profile(_models_from_csv(models_csv))
+        elif models_file:
+            profile = model_registry.load_profile_from_file(models_file)
+        elif all_available:
+            ids = lm_client.all_llm_ids()
+            if not ids:
+                console.print("[bold red]Error:[/bold red] no LLMs found on the server.")
+                sys.exit(1)
+            profile = _ad_hoc_profile(
+                [Model(name=i, lm_studio_id=i) for i in ids],
+                name="all-available",
+            )
+        elif loaded_only:
+            if not loaded_ids_list:
+                console.print(
+                    "[bold red]Error:[/bold red] no models are currently loaded in LM Studio."
+                )
+                sys.exit(1)
+            profile = _ad_hoc_profile(
+                [Model(name=i, lm_studio_id=i) for i in loaded_ids_list],
+                name="loaded-only",
+            )
+        else:
+            named = model_registry.get_profile_by_name("lm_studio")
+            if named is None:
+                console.print(
+                    "[bold red]Error:[/bold red] no 'lm_studio' profile found. "
+                    "Pass --models, --models-file, --all-available, or --loaded-only."
+                )
+                sys.exit(1)
+            profile = named
+            # If the bundled profile doesn't match what's loaded, suggest a better path
+            # rather than running through 5 guaranteed failures.
+            in_profile = {m.identifier for m in profile.models}
+            if loaded_ids and not (loaded_ids & in_profile):
+                console.print(
+                    "[bold red]Error:[/bold red] none of the bundled 'lm_studio' profile "
+                    "models are loaded in LM Studio."
+                )
+                console.print(
+                    "[dim]Currently loaded:[/dim] "
+                    + (", ".join(loaded_ids_list) if loaded_ids_list else "(nothing loaded)")
+                )
+                console.print(
+                    "[dim]Try one of:[/dim]\n"
+                    "  llm-bench run --backend lm-studio --loaded-only\n"
+                    "  llm-bench run --backend lm-studio --all-available\n"
+                    "  llm-bench run --backend lm-studio --models "
+                    f"{loaded_ids_list[0] if loaded_ids_list else '<id>'}"
+                )
+                sys.exit(1)
+
+        bench_version = lm_client.server_version()
+        if is_local:
+            hw_fingerprint: str | None = None
+        else:
+            raw = f"{label}:{server_url}"
+            hw_fingerprint = hashlib.sha256(raw.encode()).hexdigest()[:16]
     else:
-        profile = model_registry.select_profile(sysinfo)
+        bench_path = Path(llama_bench)
+        if not bench_path.exists():
+            console.print(
+                f"[bold red]Error:[/bold red] llama-bench not found at "
+                f"[cyan]{llama_bench}[/cyan]"
+            )
+            console.print("Use [bold]--llama-bench[/bold] or set the correct path.")
+            sys.exit(1)
+        if threads is not None:
+            extra.extend(["-t", str(threads)])
+        if models_file:
+            profile = model_registry.load_profile_from_file(models_file)
+        else:
+            profile = model_registry.select_profile(sysinfo)
+        bench_version = get_llama_bench_version(llama_bench)
+        hw_fingerprint = None
+        loaded_ids = set()
 
-    console.print(build_sysinfo_panel(sysinfo, profile.description))
+    # ── Sysinfo / header panels ───────────────────────────────────────────
+    if backend == "lm-studio" and not _is_local_url(server_url):
+        console.print(
+            Panel.fit(
+                f"[bold]Remote target[/bold]  [cyan]{label}[/cyan]\n"
+                f"[dim]url:[/dim]  {server_url}\n"
+                f"[dim]profile:[/dim]  {profile.description}",
+                title="[bold]LM Studio[/bold]",
+                border_style="cyan",
+            )
+        )
+    else:
+        console.print(build_sysinfo_panel(sysinfo, profile.description))
     console.print()
 
-    bench_version = get_llama_bench_version(llama_bench)
     run_id = storage.new_run_id()
     meta = storage.make_run_meta(
         run_id=run_id,
@@ -151,18 +336,42 @@ def run(
         repetitions=repetitions,
         profile_name=profile.profile,
         model_count=len(profile.models),
+        backend=backend,
+        server_url=server_url if backend == "lm-studio" else None,
+        label=label if backend == "lm-studio" else None,
+        hw_fingerprint_override=hw_fingerprint,
     )
 
-    console.print(
-        Panel.fit(
+    if backend == "lm-studio":
+        header_top = (
+            f"[bold cyan]Benchmark Run[/bold cyan]  [dim]{run_id}[/dim]\n"
+            f"[dim]server:[/dim]  {server_url}  [dim]({bench_version})[/dim]\n"
+            f"[dim]probe:[/dim]   {probe}  [dim]rep={repetitions}"
+            + (f"  pp={n_prompt}  tg={n_gen}" if probe == "pp-tg" else "")
+            + "[/dim]"
+            + ("  [yellow](--fresh)[/yellow]" if fresh else "")
+        )
+    else:
+        header_top = (
             f"[bold cyan]Benchmark Run[/bold cyan]  [dim]{run_id}[/dim]\n"
             f"[dim]binary:[/dim]  {llama_bench}  [dim]({bench_version})[/dim]\n"
             f"[dim]config:[/dim]  pp={n_prompt}  tg={n_gen}  rep={repetitions}"
-            + ("  [yellow](--fresh)[/yellow]" if fresh else ""),
-            border_style="cyan",
+            + ("  [yellow](--fresh)[/yellow]" if fresh else "")
         )
-    )
+    console.print(Panel.fit(header_top, border_style="cyan"))
     console.print()
+
+    # Warn (don't fail) when a profile model isn't loaded — LM Studio can JIT-load,
+    # but the user should know it'll be slower for the first request.
+    if backend == "lm-studio" and loaded_ids:
+        missing = [m.identifier for m in profile.models if m.identifier not in loaded_ids]
+        if missing and len(missing) < len(profile.models):
+            console.print(
+                "[yellow]⚠ Some profile models are not currently loaded — LM Studio will "
+                "load them on first request:[/yellow] " + ", ".join(missing[:5])
+                + (f"  …(+{len(missing) - 5} more)" if len(missing) > 5 else "")
+            )
+            console.print()
 
     results: list[BenchResult] = []
     cached_flags: dict[str, bool] = {}
@@ -203,71 +412,83 @@ def run(
 
     with Live(_Renderable(), console=console, refresh_per_second=8):
         for idx, model in enumerate(profile.models):
-            label = f"[{idx + 1}/{total}]"
-            markup_label = f"\\[{idx + 1}/{total}]"
+            slot = f"[{idx + 1}/{total}]"
+            markup_slot = f"\\[{idx + 1}/{total}]"
+            ident = model.identifier
 
             # ── Cache lookup ──────────────────────────────────────────────
             if not fresh:
-                cached = storage.find_cached_result(meta, model.hf_repo)
+                cached = storage.find_cached_result(meta, ident)
                 if cached is not None:
+                    tg_disp = f"{cached.tg_avg_ts:.2f}" if cached.tg_avg_ts else "?"
                     completed_lines.append(
-                        f"  {markup_label} [dim]↩ cached[/dim]  [bold]{escape(model.name)}[/bold]"
-                        f"  TG={cached.tg_avg_ts:.2f} t/s"
+                        f"  {markup_slot} [dim]↩ cached[/dim]  [bold]{escape(model.name)}[/bold]"
+                        f"  TG={tg_disp} t/s"
                     )
                     results.append(cached)
-                    cached_flags[model.hf_repo] = True
+                    cached_flags[ident] = True
                     continue
 
             _state.update(
-                {"label": label, "name": model.name, "t0": time.monotonic(), "active": True}
+                {"label": slot, "name": model.name, "t0": time.monotonic(), "active": True}
             )
             recent_log.clear()
 
             def on_status(line: str) -> None:
                 recent_log.append(line[:200])
 
-            stdout, stderr, returncode = run_benchmark(
-                llama_bench=llama_bench,
-                hf_repo=model.hf_repo,
-                n_prompt=n_prompt,
-                n_gen=n_gen,
-                repetitions=repetitions,
-                hf_token=hf_token,
-                extra_args=extra,
-                on_status=on_status,
-            )
+            if backend == "lm-studio":
+                assert lm_client is not None
+                result = run_lm_studio_benchmark(
+                    client=lm_client,
+                    model_id=ident,
+                    n_prompt=n_prompt,
+                    n_gen=n_gen,
+                    repetitions=repetitions,
+                    probe=probe,
+                    on_status=on_status,
+                )
+            else:
+                stdout, stderr, returncode = run_benchmark(
+                    llama_bench=llama_bench,
+                    hf_repo=ident,
+                    n_prompt=n_prompt,
+                    n_gen=n_gen,
+                    repetitions=repetitions,
+                    hf_token=hf_token,
+                    extra_args=extra,
+                    on_status=on_status,
+                )
+                if returncode != 0:
+                    last_err = (
+                        stderr.strip().splitlines()[-1] if stderr.strip() else "unknown error"
+                    )
+                    result = BenchResult(
+                        model_name=model.name,
+                        hf_repo=ident,
+                        error=f"exit {returncode}: {last_err[:70]}",
+                    )
+                else:
+                    json_data = extract_json(stdout)
+                    result = parse_bench_output(model.name, ident, json_data)
 
             _state["active"] = False
             recent_log.clear()
 
-            if returncode != 0:
-                last_err = stderr.strip().splitlines()[-1] if stderr.strip() else "unknown error"
-                result = BenchResult(
-                    model_name=model.name,
-                    hf_repo=model.hf_repo,
-                    error=f"exit {returncode}: {last_err[:70]}",
-                )
+            if result.error:
                 completed_lines.append(
-                    f"  {markup_label} [red]✗[/red] [bold]{escape(model.name)}[/bold]"
-                    "  [red]failed[/red]"
+                    f"  {markup_slot} [yellow]⚠[/yellow] [bold]{escape(model.name)}[/bold]"
+                    f"  [yellow]{escape(result.error)}[/yellow]"
                 )
             else:
-                json_data = extract_json(stdout)
-                result = parse_bench_output(model.name, model.hf_repo, json_data)
-                if result.error:
-                    completed_lines.append(
-                        f"  {markup_label} [yellow]⚠[/yellow] [bold]{escape(model.name)}[/bold]"
-                        f"  [yellow]{escape(result.error)}[/yellow]"
-                    )
-                else:
-                    tg_str = f"{result.tg_avg_ts:.2f} t/s" if result.tg_avg_ts else "?"
-                    completed_lines.append(
-                        f"  {markup_label} [green]✓[/green] [bold]{escape(model.name)}[/bold]"
-                        f"  TG={tg_str}"
-                    )
+                tg_str = f"{result.tg_avg_ts:.2f} t/s" if result.tg_avg_ts else "?"
+                completed_lines.append(
+                    f"  {markup_slot} [green]✓[/green] [bold]{escape(model.name)}[/bold]"
+                    f"  TG={tg_str}"
+                )
 
             results.append(result)
-            cached_flags[model.hf_repo] = False
+            cached_flags[ident] = False
 
     # ── Compute scores and display ────────────────────────────────────────
     scores = compute_scores(results)
@@ -356,7 +577,8 @@ def models_list() -> None:
         console.print(f"[bold cyan]{p.profile}[/bold cyan]  {p.description}  {source}")
         for m in p.models:
             console.print(
-                f"  [dim]·[/dim] {m.name}  [dim]{m.hf_repo}  ~{m.estimated_size_gb:.1f} GiB[/dim]"
+                f"  [dim]·[/dim] {m.name}  "
+                f"[dim]{m.identifier}  ~{m.estimated_size_gb:.1f} GiB[/dim]"
             )
         console.print()
 
@@ -392,11 +614,28 @@ def results_show(run_id: str) -> None:
         sys.exit(1)
 
     sysinfo = sysinfo_mod.collect()
-    profile = model_registry.select_profile(sysinfo)
+    profile = model_registry.get_profile_by_name(meta.profile_name)
+    if profile is None:
+        # Profile no longer on disk (e.g. ad-hoc --models run): synthesize a stub
+        # so the size map still keys correctly off identifiers.
+        profile = ModelProfile(
+            profile=meta.profile_name,
+            description=f"(profile '{meta.profile_name}' not found on disk)",
+            min_ram_gb=0,
+            max_ram_gb=9999,
+            models=[Model(name=r.model_name, hf_repo=r.hf_repo) for r in bench_results],
+        )
     scores = compute_scores(bench_results)
     console.print(build_summary_table(bench_results, scores, cached, profile, sysinfo))
+    backend_tag = (
+        f"  ·  backend: {meta.backend}"
+        + (f" ({meta.label})" if meta.label else "")
+        if meta.backend != "llama-bench"
+        else ""
+    )
     console.print(
-        f"\n[dim]Run: {run_id}  ·  {meta.timestamp[:19]}  ·  hw: {meta.hw_fingerprint}[/dim]"
+        f"\n[dim]Run: {run_id}  ·  {meta.timestamp[:19]}  ·  hw: {meta.hw_fingerprint}"
+        f"{backend_tag}[/dim]"
     )
 
 
