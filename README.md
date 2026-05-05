@@ -4,10 +4,11 @@
 
 `llm-bench` was inspired by [canirun.ai](https://www.canirun.ai): after seeing what models are estimated to run on your system, the natural next step is to measure how they actually perform on your specific machine.
 
-It runs the same kind of test you'd run with `llama-bench` (prompt-processing speed and token-generation speed, repeated and averaged), but you can drive it against either:
+It runs the same kind of test you'd run with `llama-bench` (prompt-processing speed and token-generation speed, repeated and averaged), but you can drive it against any of:
 
-- **LM Studio** (recommended) — point it at LM Studio's local HTTP server and benchmark whatever models you've loaded there. Zero compile step. Works across your whole fleet — run it once on each machine and use `llm-bench results compare` to see which one is faster.
-- **llama.cpp** — wraps the `llama-bench` binary directly for users who already have a llama.cpp build and want to test arbitrary HuggingFace repos.
+- **LM Studio** (recommended for most people) — point it at LM Studio's local HTTP server and benchmark whatever models you've loaded there. Zero compile step. Works across your whole fleet — run it once on each machine and use `llm-bench results compare` to see which one is faster.
+- **llama.cpp `llama-server`** — point it at a running `llama-server` HTTP service. Native `/completion` endpoint exposes precise per-request timings, no client-side timing or token-counting needed.
+- **llama.cpp `llama-bench`** — wraps the `llama-bench` binary directly for users who already have a llama.cpp build and want to test arbitrary HuggingFace repos.
 
 ```
 System Info
@@ -33,7 +34,8 @@ System Info
 - Python 3.11+
 - One of:
   - **LM Studio** with the local server enabled (Settings → Developer → "Serve on local network"), and at least one model loaded.
-  - **llama.cpp** built locally — specifically the `llama-bench` binary.
+  - **llama.cpp `llama-server`** running on its default port (or any URL you pass via `--server-url`). Start it with `./llama-server -m model.gguf --port 8080` (and add `-ngl 999` for full GPU offload, etc.).
+  - **llama.cpp `llama-bench`** binary built locally.
 
 ## Installation
 
@@ -99,6 +101,44 @@ By default `--probe pp-tg` runs two probes per model and reports both, mirroring
 
 Use `--probe single` for a quick one-shot ("what's your favorite color?") that reports only TG — useful for a sanity check.
 
+## Quick Start — llama-server (llama.cpp HTTP server)
+
+If you've started `llama-server` from llama.cpp (e.g. `./llama-server -m model.gguf --port 8080`), point `llm-bench` at it the same way you would LM Studio. The model is auto-discovered from `/props`, and metrics come straight from the `timings` block of `/completion` — no client-side timing.
+
+```bash
+# Default: hits localhost:8080, auto-detects the loaded model
+llm-bench run --backend llama-server
+
+# Different port / host
+llm-bench run --backend llama-server --server-url http://localhost:9090
+
+# Quick one-shot probe
+llm-bench run --backend llama-server --probe single --repetitions 3
+
+# Override the displayed model name (defaults to /props's model_alias or basename of model_path)
+llm-bench run --backend llama-server --models my-7b-q4
+```
+
+### Compare two boxes running llama-server
+
+```bash
+# On each machine, default localhost:8080
+desktop$  llm-bench run --backend llama-server
+homelab$  llm-bench run --backend llama-server
+
+# Or remotely from one machine, hitting both over LAN (--label required for non-localhost):
+$  llm-bench run --backend llama-server --server-url http://desktop:8080 --label desktop
+$  llm-bench run --backend llama-server --server-url http://homelab:8080 --label homelab
+
+$  llm-bench results compare <desktop-run-id> <homelab-run-id>
+```
+
+`llama-server` runs one model per process, so flags like `--all-available`, `--loaded-only`, and `--models-file` aren't accepted for this backend. To benchmark several models, run multiple `llama-server` instances on different ports and run `llm-bench` against each.
+
+### Why prefer `llama-server` over `lm-studio` when available
+
+The `/completion` response includes a `timings` block with `prompt_per_second` and `predicted_per_second` already computed. That's a direct, precise read of pp/tg speed — no need to deal with reasoning-token contamination of `tokens_per_second` or with LM Studio's quirk of returning `time_to_first_token=0` for very short generations. If you're already running `llama-server`, this is the most accurate backend.
+
 ## Quick Start — llama.cpp
 
 ```bash
@@ -120,11 +160,13 @@ The llama.cpp backend uses bundled YAML profiles (`low_ram.yaml`, `medium_ram.ya
 1. **Hardware detection** — reads CPU model/cores, total/available RAM, and GPU (NVIDIA via `nvidia-smi`, AMD via `rocm-smi`, Apple via `system_profiler`).
 2. **Profile / model selection**:
    - LM Studio backend: defaults to the bundled `lm_studio.yaml`, but `--loaded-only` and `--all-available` discover models from the running server.
-   - llama.cpp backend: picks the best-fit YAML from `data/models/` based on RAM tier.
-3. **Cache lookup** — each `(hw_fingerprint, params, model)` triple is hashed; matches are shown instantly with a `(cached)` badge. The cache key includes the backend, server URL, and label, so LM Studio results never collide with llama.cpp results, and runs from different machines stay separate.
+   - llama-server backend: auto-discovers the single loaded model from `/props`. Override the displayed name with `--models <id>`.
+   - llama-bench backend: picks the best-fit YAML from `data/models/` based on RAM tier.
+3. **Cache lookup** — each `(hw_fingerprint, params, model)` triple is hashed; matches are shown instantly with a `(cached)` badge. The cache key includes the backend, server URL, and label, so results from different backends or different machines never collide.
 4. **Benchmark** —
    - LM Studio: POSTs to `/api/v1/chat` per probe, reads the `stats` block.
-   - llama.cpp: runs `llama-bench -hf <repo> -p 512 -n 200 -r 5 -o json` and parses stdout.
+   - llama-server: POSTs to `/completion` per probe, reads `timings.prompt_per_second` and `timings.predicted_per_second` directly.
+   - llama-bench: runs `llama-bench -hf <repo> -p 512 -n 200 -r 5 -o json` and parses stdout.
 5. **Rating** — `score = 0.7 × (TG t/s ÷ best) + 0.3 × (PP t/s ÷ best)`, scaled 0–100 and shown as 1–5 stars. TG is weighted more because it determines chat response speed.
 6. **Save** — writes results to `~/.llm-bench/results/<run-id>/` for future comparisons.
 
@@ -166,23 +208,29 @@ curl http://localhost:1234/api/v1/models | jq '.data[].id // .models[].key'
 llm-bench run [OPTIONS] [EXTRA_LLAMA_ARGS]...
 
   Backend selection:
-    --backend [llama-bench|lm-studio]   Default: llama-bench
+    --backend [llama-bench|lm-studio|llama-server]   Default: llama-bench
 
-  LM Studio backend:
-    --server-url URL          LM Studio base URL (default: http://localhost:1234)
+  HTTP backends (lm-studio + llama-server):
+    --server-url URL          Base URL. Default: lm-studio → http://localhost:1234,
+                                                  llama-server → http://localhost:8080
     --label TEXT              Label this machine; required for non-localhost URLs
     --probe [pp-tg|single]    Default: pp-tg
+
+  LM Studio only:
     --models LIST             Comma-separated LM Studio model IDs
     --all-available           Bench every LLM the server knows
     --loaded-only             Bench only currently-loaded models
 
-  llama.cpp backend:
+  llama-server only:
+    --models NAME             Override the displayed model name (one model per server instance)
+
+  llama-bench backend only:
     --llama-bench PATH        Path to llama-bench binary
     -t, --threads N           CPU thread count passed to llama-bench
     --hf-token TOKEN          HuggingFace token (or set HF_TOKEN env var)
 
   Shared:
-    --models-file FILE        Override auto-selected YAML profile
+    --models-file FILE        Override auto-selected YAML profile (lm-studio + llama-bench only)
     --fresh                   Ignore cached results
     -r, --repetitions N       Repetitions per probe (default: 5)
     -p, --n-prompt N          Prompt token count for pp probe (default: 512)

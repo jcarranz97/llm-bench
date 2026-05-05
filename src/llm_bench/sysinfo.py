@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import platform
+import re
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -125,6 +127,82 @@ def _detect_apple_gpu() -> list[GpuInfo]:
     return []
 
 
+def _vendor_to_backend(vendor: str) -> str:
+    v = vendor.lower()
+    if "nvidia" in v:
+        return "CUDA"
+    if "advanced micro devices" in v or "amd" in v or "ati" in v:
+        return "ROCm"
+    if "intel" in v:
+        return "Vulkan"
+    if "apple" in v:
+        return "Metal"
+    return "GPU"
+
+
+def _read_sysfs_vram_for_pci(pci_addr: str) -> float | None:
+    """Return VRAM in GB by matching pci_addr ('0a:00.0') to /sys/class/drm/card*/device."""
+    try:
+        cards = list(Path("/sys/class/drm").glob("card[0-9]*"))
+    except OSError:
+        return None
+    target = f"0000:{pci_addr}"
+    for card in cards:
+        try:
+            link = card.resolve()
+        except OSError:
+            continue
+        if target not in str(link):
+            continue
+        vram_file = card / "device" / "mem_info_vram_total"
+        try:
+            bytes_total = int(vram_file.read_text().strip())
+        except (OSError, ValueError):
+            return None
+        if bytes_total > 0:
+            return bytes_total / (1024**3)
+    return None
+
+
+def _detect_gpus_via_lspci() -> list[GpuInfo]:
+    """Universal fallback for any Linux box with lspci. No driver tooling required."""
+    try:
+        out = subprocess.check_output(
+            ["lspci", "-mm"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    gpus: list[GpuInfo] = []
+    classes = ('"VGA compatible controller"', '"3D controller"', '"Display controller"')
+    for line in out.splitlines():
+        if not any(c in line for c in classes):
+            continue
+        parts = re.findall(r'"([^"]*)"', line)
+        if len(parts) < 3:
+            continue
+        # `lspci -mm` line: BUS:DEV.FN "Class" "Vendor" "Device" "SVendor" "SDevice" ...
+        # The BUS:DEV.FN prefix is unquoted, so class=parts[0], vendor=parts[1], device=parts[2].
+        pci_addr = line.split(maxsplit=1)[0]
+        vendor, device = parts[1], parts[2]
+        # Friendly name: vendor short + product description
+        vendor_short = vendor.split()[0] if vendor else ""
+        if vendor_short.lower() in ("advanced", "ati"):
+            vendor_short = "AMD"
+        name = f"{vendor_short} {device}".strip()
+        gpus.append(
+            GpuInfo(
+                name=name,
+                vram_gb=_read_sysfs_vram_for_pci(pci_addr),
+                backend=_vendor_to_backend(vendor),
+            )
+        )
+    return gpus
+
+
 def collect() -> SystemInfo:
     import psutil
 
@@ -136,7 +214,12 @@ def collect() -> SystemInfo:
     available_ram_gb = mem.available / (1024**3)
     os_name = f"{platform.system()} {platform.release()}"
 
-    gpus = _detect_nvidia_gpus() or _detect_amd_gpus() or _detect_apple_gpu()
+    gpus = (
+        _detect_nvidia_gpus()
+        or _detect_amd_gpus()
+        or _detect_apple_gpu()
+        or _detect_gpus_via_lspci()
+    )
 
     return SystemInfo(
         cpu_model=cpu_model,

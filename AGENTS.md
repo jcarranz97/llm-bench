@@ -8,10 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install all dependencies (runtime + dev)
 uv sync
 
-# Run the CLI — both backends supported
+# Run the CLI — three backends supported
 uv run llm-bench sysinfo
 uv run llm-bench run --backend lm-studio --loaded-only        # LM Studio (recommended)
-uv run llm-bench run --llama-bench /path/to/llama-bench       # llama.cpp
+uv run llm-bench run --backend llama-server                   # llama.cpp llama-server HTTP
+uv run llm-bench run --llama-bench /path/to/llama-bench       # llama.cpp llama-bench subprocess
 uv run llm-bench models list
 uv run llm-bench results list
 
@@ -32,20 +33,22 @@ uv run mypy src/
 
 ## Architecture
 
-Two pluggable backends produce the same `BenchResult` shape, so caching, ranking, and `results compare` are backend-agnostic:
+Three pluggable backends produce the same `BenchResult` shape, so caching, ranking, and `results compare` are backend-agnostic:
 
 - **LM Studio** (the typical path) — drives LM Studio's local HTTP server (`/api/v1/chat`). No subprocess, no compile step. Two probes per model — `pp` (prompt processing speed from TTFT) and `tg` (token generation from `stats.tokens_per_second`) — mirror what `llama-bench` produces.
-- **llama.cpp** — wraps the `llama-bench` binary as a subprocess and parses its JSON output. Used when the user wants to benchmark arbitrary HuggingFace GGUF repos directly.
+- **llama-server** — drives llama.cpp's `llama-server` HTTP service via its native `POST /completion` endpoint. Reads `timings.prompt_per_second` and `timings.predicted_per_second` directly — the most precise of the three (no client-side timing, no reasoning-token contamination).
+- **llama-bench** — wraps the `llama-bench` binary as a subprocess and parses its JSON output. Used when the user wants to benchmark arbitrary HuggingFace GGUF repos directly without setting up a server.
 
 ### Data flow for `llm-bench run`
 
 ```
 sysinfo.collect()
-    → models.select_profile() / get_profile_by_name()    pick the model list
-    → storage.find_cached_result()                       per-model cache lookup
+    → models.select_profile() / get_profile_by_name()       pick the model list
+    → storage.find_cached_result()                          per-model cache lookup
     → backend dispatch (cli.py):
-         lm-studio  → lm_studio_runner.run_lm_studio_benchmark()  → BenchResult
-         llama.cpp  → runner.run_benchmark() → parser.parse_bench_output()  → BenchResult
+         lm-studio    → lm_studio_runner.run_lm_studio_benchmark()        → BenchResult
+         llama-server → llama_server_runner.run_llama_server_benchmark()  → BenchResult
+         llama-bench  → runner.run_benchmark() → parser.parse_bench_output() → BenchResult
     → reporter.build_summary_table()
     → storage.save_run()
 ```
@@ -58,11 +61,13 @@ sysinfo.collect()
 | `models.py` | Loads YAML profiles from `src/llm_bench/data/models/` (bundled) and `~/.llm-bench/models/` (user overrides). `Model` carries optional `hf_repo` *and* `lm_studio_id`; `Model.identifier` returns whichever is set. `select_profile()` picks the highest-tier RAM profile (excluding the `lm_studio` profile). `get_profile_by_name(name)` is used by the LM Studio path to find `lm_studio.yaml` directly. |
 | `lm_studio.py` | Stdlib-only HTTP client (`urllib.request`) for LM Studio's local server. Handles 2026 `/api/v1/models` shape (`{"models": [...]}` with `key` + `loaded_instances`) and falls back to legacy `/api/v0/models` (`{"data": [...]}` with `state`). `chat()` POSTs to `/api/v1/chat` with `{model, system_prompt, input, max_output_tokens}` — `max_tokens` is rejected by the server, so do NOT add it. HTTP errors get the `error.message` field extracted to a single line. |
 | `lm_studio_runner.py` | Per-model probe runner. `pp-tg` mode: long prompt with `max_output_tokens=8` (1 fails — TTFT comes back as 0 from the server) → `pp_avg_ts = input_tokens / time_to_first_token_seconds`; short prompt with `max_output_tokens=n_gen` → `tg_avg_ts = stats.tokens_per_second`. `single` mode: one realistic prompt, populates only `tg_avg_ts`. Returns the same `BenchResult` dataclass `parser.py` produces. |
+| `llama_server.py` | Stdlib-only HTTP client for llama.cpp's `llama-server`. `props()` returns the server `model_path` / `build_info`; `model_id()` derives a friendly name from `model_alias`, then basename of `model_path`, then `/v1/models`, then a generic fallback. `completion()` POSTs to `/completion` with `cache_prompt=False` and `temperature=0.0` so repeated probes don't free-ride on the prefix cache. |
+| `llama_server_runner.py` | Per-model probe runner. `pp-tg` mode: long prompt with `n_predict=1` reads `timings.prompt_per_second`; short prompt with `n_predict=n_gen` reads `timings.predicted_per_second`. `single` mode: one realistic prompt populates BOTH metrics from the same response. Same `BenchResult` shape. |
 | `runner.py` | Runs `llama-bench -hf <repo> -o json ...`. Uses `Popen` + a background thread to drain stderr and call `on_status(line)` for live progress updates while stdout is captured. |
 | `parser.py` | `extract_json()` finds the `[...]` block in stdout even if noise surrounds it. `parse_bench_output()` maps entries where `n_prompt>0,n_gen=0` → pp and `n_gen>0,n_prompt=0` → tg. Defines the `BenchResult` dataclass that both backends produce. |
 | `storage.py` | Persists to `~/.llm-bench/results/<run-id>/`. `RunMeta` carries `backend` / `server_url` / `label`. The cache key folds those in **only when non-default**, so existing llama-bench cache keys stay stable across the upgrade. Run dirs are append-only; previous runs are never mutated. |
 | `reporter.py` | Pure presentation: rich tables, fit indicators, star ratings. Score = `0.7×TG_normalized + 0.3×PP_normalized`. History table shows `Backend` + `Target` columns so cross-machine LM Studio runs are easy to spot. |
-| `cli.py` | Click entry point. `--backend [llama-bench\|lm-studio]` selects the dispatch path. LM Studio flags: `--server-url`, `--label`, `--probe`, `--models`, `--all-available`, `--loaded-only`. `--label` is required when `--server-url` is non-localhost (so two machines never collide in the cache). |
+| `cli.py` | Click entry point. `--backend [llama-bench\|lm-studio\|llama-server]` selects the dispatch path. HTTP-backend flags: `--server-url` (backend-specific defaults: 1234 for lm-studio, 8080 for llama-server), `--label`, `--probe`. LM Studio also accepts `--models`, `--all-available`, `--loaded-only`. llama-server accepts `--models` to override the displayed name (one model per server instance, so `--all-available` / `--loaded-only` / `--models-file` are rejected with a friendly error). `--label` is required when `--server-url` is non-localhost (so two machines never collide in the cache). |
 
 ### Model profiles (YAML)
 
@@ -102,3 +107,11 @@ A result is considered valid if `SHA-256(hw_fingerprint + n_prompt + n_gen + rep
 - `/api/v1/chat` rejects unknown keys — sending `max_tokens` triggers HTTP 400 ("unrecognized_keys"). Use `max_output_tokens` only.
 - With `max_output_tokens=1`, the server returns `tokens_per_second=0` and `time_to_first_token_seconds=0` (stats are not populated for one-token replies). The pp probe uses `max_output_tokens=8` to work around this.
 - Reasoning-capable models emit thinking tokens that count toward `total_output_tokens` and `tokens_per_second`. The system prompt nudges them toward terse output but cannot suppress reasoning entirely; this is a known caveat documented in the runner.
+
+### llama-server gotchas (worth keeping in mind when editing `llama_server.py`)
+
+- One model per process — `llama-server` doesn't expose a model list to switch between. `--all-available` / `--loaded-only` / `--models-file` are explicitly rejected for this backend; use `--models <name>` only to override the displayed model name (the actual model loaded is whatever the server was started with).
+- `cache_prompt` defaults to `true` server-side — repeated identical prompts will skip prompt processing entirely on the second call, returning `prompt_per_second` of essentially infinity. The client always sends `cache_prompt=false` for probes.
+- The connectivity probe in `cli.py` tries `/health` first, then falls back to `/props`. Older `llama-server` builds may not expose `/health`.
+- `model_id()` is multi-tier (`model_alias` → basename of `model_path` → `/v1/models` first ID → generic fallback) because different llama.cpp versions populate different fields in `/props`. Don't break the fallback chain when refactoring.
+- The `/completion` `timings` block includes both `prompt_per_second` and `predicted_per_second`, so `single` mode reads BOTH from one call (unlike LM Studio's single mode, which can only fill `tg`).

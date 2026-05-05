@@ -21,6 +21,8 @@ from rich.text import Text
 from llm_bench import __version__, storage
 from llm_bench import models as model_registry
 from llm_bench import sysinfo as sysinfo_mod
+from llm_bench.llama_server import LlamaServerClient, LlamaServerError
+from llm_bench.llama_server_runner import run_llama_server_benchmark
 from llm_bench.lm_studio import LMStudioClient, LMStudioError
 from llm_bench.lm_studio_runner import run_lm_studio_benchmark
 from llm_bench.models import Model, ModelProfile
@@ -38,6 +40,7 @@ console = Console()
 
 DEFAULT_LLAMA_BENCH = "/home/homelab/repos/llama.cpp/build/bin/llama-bench"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234"
+DEFAULT_LLAMA_SERVER_URL = "http://localhost:8080"
 
 
 def _is_local_url(url: str) -> bool:
@@ -87,21 +90,22 @@ def main() -> None:
 @main.command()
 @click.option(
     "--backend",
-    type=click.Choice(["llama-bench", "lm-studio"], case_sensitive=False),
+    type=click.Choice(["llama-bench", "lm-studio", "llama-server"], case_sensitive=False),
     default="llama-bench",
     show_default=True,
-    help="Which backend to drive: local llama-bench binary, or LM Studio HTTP server.",
+    help="Which backend to drive: local llama-bench binary, LM Studio HTTP server, "
+    "or a llama.cpp llama-server HTTP service.",
 )
 @click.option(
     "--server-url",
-    default=DEFAULT_LM_STUDIO_URL,
-    show_default=True,
-    help="LM Studio base URL (only used with --backend lm-studio).",
+    default=None,
+    help="HTTP server base URL. Defaults: lm-studio → http://localhost:1234, "
+    "llama-server → http://localhost:8080.",
 )
 @click.option(
     "--label",
     default=None,
-    help="Label for the machine running LM Studio (e.g. 'desktop', 'homelab'). "
+    help="Label for the machine running the HTTP server (e.g. 'desktop', 'homelab'). "
     "Required when --server-url is non-localhost. Used in cache keys + reports.",
 )
 @click.option(
@@ -109,7 +113,7 @@ def main() -> None:
     type=click.Choice(["pp-tg", "single"], case_sensitive=False),
     default="pp-tg",
     show_default=True,
-    help="LM Studio probe: 'pp-tg' mirrors llama-bench, 'single' is one realistic prompt.",
+    help="HTTP backend probe: 'pp-tg' mirrors llama-bench, 'single' is one realistic prompt.",
 )
 @click.option(
     "--models",
@@ -171,7 +175,7 @@ def main() -> None:
 @click.argument("extra_llama_args", nargs=-1, type=click.UNPROCESSED)
 def run(
     backend: str,
-    server_url: str,
+    server_url: str | None,
     label: str | None,
     probe: str,
     models_csv: str | None,
@@ -201,6 +205,12 @@ def run(
         llm-bench run --backend lm-studio
         llm-bench run --backend lm-studio --probe single --repetitions 3
         llm-bench run --backend lm-studio --server-url http://homelab:1234 --label homelab
+
+    llama-server examples:
+
+    \b
+        llm-bench run --backend llama-server
+        llm-bench run --backend llama-server --server-url http://desktop:8080 --label desktop
     """
     backend = backend.lower()
     extra: list[str] = list(extra_llama_args)
@@ -208,6 +218,17 @@ def run(
     # ── Backend-specific setup ────────────────────────────────────────────
     sysinfo = sysinfo_mod.collect()
     lm_client: LMStudioClient | None = None
+    ls_client: LlamaServerClient | None = None
+
+    # Pick a default URL per backend so users don't have to memorize ports.
+    if server_url is None:
+        server_url = (
+            DEFAULT_LM_STUDIO_URL
+            if backend == "lm-studio"
+            else DEFAULT_LLAMA_SERVER_URL
+            if backend == "llama-server"
+            else ""
+        )
 
     if backend == "lm-studio":
         is_local = _is_local_url(server_url)
@@ -293,6 +314,55 @@ def run(
         else:
             raw = f"{label}:{server_url}"
             hw_fingerprint = hashlib.sha256(raw.encode()).hexdigest()[:16]
+    elif backend == "llama-server":
+        is_local = _is_local_url(server_url)
+        if not is_local and not label:
+            console.print(
+                "[bold red]Error:[/bold red] --label is required when --server-url is "
+                "not localhost (so results from different boxes don't collide)."
+            )
+            sys.exit(1)
+        if all_available or loaded_only or models_file:
+            console.print(
+                "[bold red]Error:[/bold red] --all-available, --loaded-only and "
+                "--models-file aren't meaningful for llama-server (one model per "
+                "instance). Use --models to override the displayed name, or rely on /props."
+            )
+            sys.exit(1)
+
+        ls_client = LlamaServerClient(server_url)
+        # Connectivity probe — try /health first, fall back to /props since older
+        # builds don't expose /health. Either succeeding means the server is up.
+        reachable = False
+        for probe_path in ("/health", "/props"):
+            try:
+                ls_client._request("GET", probe_path)
+                reachable = True
+                break
+            except LlamaServerError:
+                continue
+        if not reachable:
+            console.print(
+                f"[bold red]Error:[/bold red] cannot reach llama-server at {server_url}. "
+                "Is `llama-server` running on this URL?"
+            )
+            sys.exit(1)
+        model_name = (
+            models_csv.split(",")[0].strip() if models_csv else ls_client.model_id()
+        )
+
+        profile = _ad_hoc_profile(
+            [Model(name=model_name, lm_studio_id=model_name)],
+            name="llama-server",
+        )
+        bench_version = ls_client.server_version()
+        if is_local:
+            hw_fingerprint = None
+        else:
+            raw = f"{label}:{server_url}"
+            hw_fingerprint = hashlib.sha256(raw.encode()).hexdigest()[:16]
+        loaded_ids_list = []
+        loaded_ids = set()
     else:
         bench_path = Path(llama_bench)
         if not bench_path.exists():
@@ -312,13 +382,15 @@ def run(
         loaded_ids = set()
 
     # ── Sysinfo / header panels ───────────────────────────────────────────
-    if backend == "lm-studio" and not _is_local_url(server_url):
+    is_remote_http = backend in ("lm-studio", "llama-server") and not _is_local_url(server_url)
+    if is_remote_http:
+        backend_title = "LM Studio" if backend == "lm-studio" else "llama-server"
         console.print(
             Panel.fit(
                 f"[bold]Remote target[/bold]  [cyan]{label}[/cyan]\n"
                 f"[dim]url:[/dim]  {server_url}\n"
                 f"[dim]profile:[/dim]  {profile.description}",
-                title="[bold]LM Studio[/bold]",
+                title=f"[bold]{backend_title}[/bold]",
                 border_style="cyan",
             )
         )
@@ -327,6 +399,7 @@ def run(
     console.print()
 
     run_id = storage.new_run_id()
+    is_http_backend = backend in ("lm-studio", "llama-server")
     meta = storage.make_run_meta(
         run_id=run_id,
         sysinfo=sysinfo,
@@ -337,12 +410,12 @@ def run(
         profile_name=profile.profile,
         model_count=len(profile.models),
         backend=backend,
-        server_url=server_url if backend == "lm-studio" else None,
-        label=label if backend == "lm-studio" else None,
+        server_url=server_url if is_http_backend else None,
+        label=label if is_http_backend else None,
         hw_fingerprint_override=hw_fingerprint,
     )
 
-    if backend == "lm-studio":
+    if is_http_backend:
         header_top = (
             f"[bold cyan]Benchmark Run[/bold cyan]  [dim]{run_id}[/dim]\n"
             f"[dim]server:[/dim]  {server_url}  [dim]({bench_version})[/dim]\n"
@@ -442,6 +515,17 @@ def run(
                 assert lm_client is not None
                 result = run_lm_studio_benchmark(
                     client=lm_client,
+                    model_id=ident,
+                    n_prompt=n_prompt,
+                    n_gen=n_gen,
+                    repetitions=repetitions,
+                    probe=probe,
+                    on_status=on_status,
+                )
+            elif backend == "llama-server":
+                assert ls_client is not None
+                result = run_llama_server_benchmark(
+                    client=ls_client,
                     model_id=ident,
                     n_prompt=n_prompt,
                     n_gen=n_gen,
