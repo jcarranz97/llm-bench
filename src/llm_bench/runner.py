@@ -16,9 +16,7 @@ def _build_env(env_vars: Mapping[str, str] | None) -> dict[str, str] | None:
     return {**os.environ, **env_vars}
 
 
-def get_llama_bench_version(
-    llama_bench: str, env_vars: Mapping[str, str] | None = None
-) -> str:
+def get_llama_bench_version(llama_bench: str, env_vars: Mapping[str, str] | None = None) -> str:
     """Return the build version string from llama-bench, or 'unknown'."""
     env = _build_env(env_vars)
     try:

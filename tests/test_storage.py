@@ -187,9 +187,7 @@ def test_find_cached_result_isolates_by_extra_args(
     save_run(meta, [prior], {"org/model-a": False})
 
     # Lookup with same extras → hit
-    assert (
-        find_cached_result(meta, "org/model-a", ["-ngl", "99"]) is not None
-    )
+    assert find_cached_result(meta, "org/model-a", ["-ngl", "99"]) is not None
     # Lookup with different extras → miss
     assert find_cached_result(meta, "org/model-a", ["-ngl", "30"]) is None
     # Lookup with no extras → miss (prior was tagged with extras)

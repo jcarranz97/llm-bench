@@ -74,9 +74,7 @@ def test_run_benchmark_passes_local_path_with_dash_m(tmp_path: Path) -> None:
     """A local_path must produce `-m <path>` and NOT `-hf` (and ignore hf_token)."""
     # Echo all argv so we can inspect what the bench would have been invoked with.
     fake_bench = tmp_path / "llama-bench"
-    fake_bench.write_text(
-        '#!/bin/sh\nfor a in "$@"; do echo "ARG=$a" >&2; done\necho "[]"\n'
-    )
+    fake_bench.write_text('#!/bin/sh\nfor a in "$@"; do echo "ARG=$a" >&2; done\necho "[]"\n')
     fake_bench.chmod(0o755)
     gguf = tmp_path / "model.gguf"
     gguf.write_bytes(b"\x00")
@@ -107,9 +105,7 @@ def test_run_benchmark_passes_local_path_with_dash_m(tmp_path: Path) -> None:
 
 def test_run_benchmark_passes_hf_repo_with_dash_hf(tmp_path: Path) -> None:
     fake_bench = tmp_path / "llama-bench"
-    fake_bench.write_text(
-        '#!/bin/sh\nfor a in "$@"; do echo "ARG=$a" >&2; done\necho "[]"\n'
-    )
+    fake_bench.write_text('#!/bin/sh\nfor a in "$@"; do echo "ARG=$a" >&2; done\necho "[]"\n')
     fake_bench.chmod(0o755)
 
     captured: list[str] = []

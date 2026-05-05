@@ -406,9 +406,7 @@ def run(
                 "Is `llama-server` running on this URL?"
             )
             sys.exit(1)
-        model_name = (
-            models_csv.split(",")[0].strip() if models_csv else ls_client.model_id()
-        )
+        model_name = models_csv.split(",")[0].strip() if models_csv else ls_client.model_id()
 
         profile = _ad_hoc_profile(
             [Model(name=model_name, lm_studio_id=model_name)],
@@ -438,9 +436,7 @@ def run(
             )
             sys.exit(1)
         if sum([bool(models_csv), bool(models_file)]) > 1:
-            console.print(
-                "[bold red]Error:[/bold red] use only one of --models / --models-file."
-            )
+            console.print("[bold red]Error:[/bold red] use only one of --models / --models-file.")
             sys.exit(1)
         if threads is not None:
             extra.extend(["-t", str(threads)])

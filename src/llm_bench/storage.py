@@ -47,9 +47,7 @@ class RunMeta:
             raw += f":env={env_str}"
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
-    def model_cache_key(
-        self, hf_repo: str, extra_args: tuple[str, ...] | list[str] = ()
-    ) -> str:
+    def model_cache_key(self, hf_repo: str, extra_args: tuple[str, ...] | list[str] = ()) -> str:
         """Per-model cache key. `extra_args` are forwarded to llama-bench (e.g.
         `-ngl 30`) and change results, so they shard the key. Empty extras
         produce no suffix — keeping pre-extras cache keys stable."""

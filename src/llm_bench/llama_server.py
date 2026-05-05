@@ -69,9 +69,7 @@ class LlamaServerClient:
         except json.JSONDecodeError as e:
             raise LlamaServerError(f"Non-JSON response from {url}: {payload[:200]}") from e
         if not isinstance(parsed, dict):
-            raise LlamaServerError(
-                f"Expected JSON object from {url}, got {type(parsed).__name__}"
-            )
+            raise LlamaServerError(f"Expected JSON object from {url}, got {type(parsed).__name__}")
         return parsed
 
     # ── Public API ─────────────────────────────────────────────────────────
