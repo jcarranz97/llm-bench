@@ -60,6 +60,7 @@ def _ad_hoc_profile(models: list[Model], name: str = "ad-hoc") -> ModelProfile:
         source_path=None,
     )
 
+
 # ── Root group ────────────────────────────────────────────────────────────────
 
 
@@ -296,8 +297,7 @@ def run(
         bench_path = Path(llama_bench)
         if not bench_path.exists():
             console.print(
-                f"[bold red]Error:[/bold red] llama-bench not found at "
-                f"[cyan]{llama_bench}[/cyan]"
+                f"[bold red]Error:[/bold red] llama-bench not found at [cyan]{llama_bench}[/cyan]"
             )
             console.print("Use [bold]--llama-bench[/bold] or set the correct path.")
             sys.exit(1)
@@ -368,7 +368,8 @@ def run(
         if missing and len(missing) < len(profile.models):
             console.print(
                 "[yellow]⚠ Some profile models are not currently loaded — LM Studio will "
-                "load them on first request:[/yellow] " + ", ".join(missing[:5])
+                "load them on first request:[/yellow] "
+                + ", ".join(missing[:5])
                 + (f"  …(+{len(missing) - 5} more)" if len(missing) > 5 else "")
             )
             console.print()
@@ -628,8 +629,7 @@ def results_show(run_id: str) -> None:
     scores = compute_scores(bench_results)
     console.print(build_summary_table(bench_results, scores, cached, profile, sysinfo))
     backend_tag = (
-        f"  ·  backend: {meta.backend}"
-        + (f" ({meta.label})" if meta.label else "")
+        f"  ·  backend: {meta.backend}" + (f" ({meta.label})" if meta.label else "")
         if meta.backend != "llama-bench"
         else ""
     )
