@@ -113,14 +113,10 @@ def _maybe_swap_in_gpu_profile(
                 matched = model_registry.find_matched_runtime_device(
                     candidate.gpu_match, runtime_devices
                 )
-                _print_gpu_profile_notice(
-                    candidate, primary, sysinfo, matched, "explicit override"
-                )
+                _print_gpu_profile_notice(candidate, primary, sysinfo, matched, "explicit override")
                 return candidate, matched
             if candidate is None:
-                console.print(
-                    f"[yellow]⚠ --gpu-profile {name!r} not found, ignoring.[/yellow]"
-                )
+                console.print(f"[yellow]⚠ --gpu-profile {name!r} not found, ignoring.[/yellow]")
         return primary, None
     if no_gpu_profiles:
         return primary, None
@@ -551,9 +547,7 @@ def run(
             profile = model_registry.load_profile_from_file(models_file)
         else:
             primary = model_registry.select_profile(sysinfo)
-            runtime_devs = device_probe.llama_bench_devices(
-                llama_bench, env_overrides or None
-            )
+            runtime_devs = device_probe.llama_bench_devices(llama_bench, env_overrides or None)
             profile, matched_device = _maybe_swap_in_gpu_profile(
                 primary,
                 sysinfo,

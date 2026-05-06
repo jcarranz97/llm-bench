@@ -117,9 +117,7 @@ def llama_bench_devices(
     #     Available devices:
     #       ROCm0: AMD Radeon RX 7900 XT (20464 MiB, 20256 MiB free)
     #       CPU: AMD Ryzen 9 7950X
-    line_re = re.compile(
-        r"^\s*(?P<name>[A-Za-z]+\d*|CPU)\s*:\s*(?P<desc>.+?)\s*(?:\(.*\))?\s*$"
-    )
+    line_re = re.compile(r"^\s*(?P<name>[A-Za-z]+\d*|CPU)\s*:\s*(?P<desc>.+?)\s*(?:\(.*\))?\s*$")
     devices: list[RuntimeDevice] = []
     for raw in out.splitlines():
         m = line_re.match(raw)
@@ -129,9 +127,7 @@ def llama_bench_devices(
         desc = m.group("desc").strip()
         if not desc or name.lower() == "available":  # skip the header sentinel
             continue
-        devices.append(
-            RuntimeDevice(name=name, description=desc, backend=_prefix_backend(name))
-        )
+        devices.append(RuntimeDevice(name=name, description=desc, backend=_prefix_backend(name)))
     return devices or None
 
 

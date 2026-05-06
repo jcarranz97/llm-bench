@@ -229,10 +229,7 @@ def select_profile(sysinfo: SystemInfo) -> ModelProfile:
     (those with a `gpu_match` block) are excluded — the former are picked
     explicitly via `--backend`, the latter by `matching_gpu_profiles()`.
     """
-    profiles = [
-        p for p in all_profiles()
-        if p.profile != "lm_studio" and p.gpu_match is None
-    ]
+    profiles = [p for p in all_profiles() if p.profile != "lm_studio" and p.gpu_match is None]
     ram = sysinfo.total_ram_gb
     for p in reversed(profiles):
         if p.min_ram_gb <= ram:

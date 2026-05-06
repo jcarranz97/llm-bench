@@ -129,9 +129,7 @@ def test_llama_server_devices_returns_none_on_props_error(monkeypatch) -> None:
 
 def test_lm_studio_runtimes_synthesises_devices_from_runtimes_and_gpus(monkeypatch) -> None:
     monkeypatch.setattr(devices, "_lms_runtime_ids", lambda: ["rocm-llama.cpp"])
-    info = _make_sysinfo(
-        [GpuInfo(name="AMD Radeon RX 7900 XT", vram_gb=20.0, backend="ROCm")]
-    )
+    info = _make_sysinfo([GpuInfo(name="AMD Radeon RX 7900 XT", vram_gb=20.0, backend="ROCm")])
     result = lm_studio_runtimes(info)
     assert result is not None
     assert len(result) == 1

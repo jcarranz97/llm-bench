@@ -296,9 +296,7 @@ models:
     assert chosen.profile != "gpu_amd_card"
 
 
-def test_matching_gpu_profiles_filters_by_physical_gpu(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_matching_gpu_profiles_filters_by_physical_gpu(monkeypatch, tmp_path: Path) -> None:
     """matching_gpu_profiles returns only profiles whose gpu_match fits a physical GPU."""
     amd_yaml = tmp_path / "specific" / "amd" / "card.yaml"
     nv_yaml = tmp_path / "specific" / "nvidia" / "card.yaml"
@@ -337,9 +335,7 @@ models:
     )
     monkeypatch.setattr("llm_bench.models._USER_MODELS_DIR", tmp_path)
 
-    info = _make_sysinfo(
-        [GpuInfo(name="AMD Radeon RX 7900 XT", vram_gb=20.0, backend="ROCm")]
-    )
+    info = _make_sysinfo([GpuInfo(name="AMD Radeon RX 7900 XT", vram_gb=20.0, backend="ROCm")])
     matches = matching_gpu_profiles(info, runtime_devices=None)
     names = {p.profile for p in matches}
     assert "gpu_amd_test" in names
@@ -408,11 +404,7 @@ models:
     assert matching_gpu_profiles(info, runtime_devices=cpu_only) == []
 
     # ROCm runtime device with the card name → match.
-    ok = [
-        RuntimeDevice(
-            name="ROCm0", description="AMD Radeon RX 7900 XT", backend="ROCm"
-        )
-    ]
+    ok = [RuntimeDevice(name="ROCm0", description="AMD Radeon RX 7900 XT", backend="ROCm")]
     matches = matching_gpu_profiles(info, runtime_devices=ok)
     assert any(p.profile == "gpu_amd_blocked" for p in matches)
 
