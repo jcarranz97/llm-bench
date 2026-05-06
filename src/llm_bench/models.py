@@ -7,7 +7,7 @@ import re
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 
@@ -38,8 +38,8 @@ class Model:
     local_path: str = ""
     estimated_size_gb: float = 0.0
     description: str = ""
-    tags: list[str] = field(default_factory=list)
-    extra_args: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list[str])
+    extra_args: list[str] = field(default_factory=list[str])
 
     @property
     def identifier(self) -> str:
@@ -63,9 +63,9 @@ class GpuMatch:
     """
 
     vendor: str  # "amd" | "nvidia" | "apple" | "intel"
-    name_contains: list[str] = field(default_factory=list)
+    name_contains: list[str] = field(default_factory=list[str])
     name_regex: str = ""
-    backends: list[str] = field(default_factory=list)
+    backends: list[str] = field(default_factory=list[str])
     min_vram_gb: float = 0.0
 
 
@@ -86,21 +86,21 @@ def _parse_gpu_match(data: dict[str, Any], path: Path) -> GpuMatch:
         raise ValueError(
             f"gpu_match.vendor in {path} must be one of {_ALLOWED_VENDORS}, got {vendor!r}"
         )
-    name_contains_raw = data.get("name_contains", []) or []
+    name_contains_raw: object = data.get("name_contains", []) or []
     if isinstance(name_contains_raw, str):
         name_contains = [name_contains_raw]
     elif isinstance(name_contains_raw, list):
-        name_contains = [str(x) for x in name_contains_raw]
+        name_contains = [str(x) for x in cast(list[Any], name_contains_raw)]
     else:
         raise ValueError(
             f"gpu_match.name_contains in {path} must be a list or string, "
             f"got {type(name_contains_raw).__name__}"
         )
-    backends_raw = data.get("backends", []) or []
+    backends_raw: object = data.get("backends", []) or []
     if isinstance(backends_raw, str):
         backends = [backends_raw]
     elif isinstance(backends_raw, list):
-        backends = [str(x) for x in backends_raw]
+        backends = [str(x) for x in cast(list[Any], backends_raw)]
     else:
         raise ValueError(
             f"gpu_match.backends in {path} must be a list or string, "
@@ -117,9 +117,9 @@ def _parse_gpu_match(data: dict[str, Any], path: Path) -> GpuMatch:
 
 def _load_yaml(path: Path) -> ModelProfile:
     with path.open() as fh:
-        data = yaml.safe_load(fh)
+        data = cast(dict[str, Any], yaml.safe_load(fh))
     models: list[Model] = []
-    for m in data.get("models", []):
+    for m in cast(list[dict[str, Any]], data.get("models", [])):
         hf_repo = m.get("hf_repo", "") or ""
         lm_studio_id = m.get("lm_studio_id", "") or ""
         local_path = m.get("local_path", "") or ""
@@ -128,11 +128,11 @@ def _load_yaml(path: Path) -> ModelProfile:
                 f"Model entry '{m.get('name', '?')}' in {path} must specify "
                 "at least one of hf_repo / lm_studio_id / local_path"
             )
-        raw_extras = m.get("extra_args", []) or []
+        raw_extras: object = m.get("extra_args", []) or []
         if isinstance(raw_extras, str):
             extra_args = shlex.split(raw_extras)
         elif isinstance(raw_extras, list):
-            extra_args = [str(a) for a in raw_extras]
+            extra_args = [str(a) for a in cast(list[Any], raw_extras)]
         else:
             raise ValueError(
                 f"Model entry '{m.get('name', '?')}' in {path}: extra_args must be a "
@@ -146,19 +146,19 @@ def _load_yaml(path: Path) -> ModelProfile:
                 local_path=local_path,
                 estimated_size_gb=float(m.get("estimated_size_gb", 0)),
                 description=m.get("description", ""),
-                tags=m.get("tags", []),
+                tags=list(m.get("tags", [])),
                 extra_args=extra_args,
             )
         )
 
     gpu_match: GpuMatch | None = None
-    raw_match = data.get("gpu_match")
+    raw_match: object = data.get("gpu_match")
     if raw_match is not None:
         if not isinstance(raw_match, dict):
             raise ValueError(
                 f"gpu_match in {path} must be a mapping, got {type(raw_match).__name__}"
             )
-        gpu_match = _parse_gpu_match(raw_match, path)
+        gpu_match = _parse_gpu_match(cast(dict[str, Any], raw_match), path)
         # When the file lives under specific/<vendor>/, sanity-check vendor agreement.
         parts = [p.lower() for p in path.parts]
         if "specific" in parts:
@@ -249,7 +249,7 @@ def get_profile_by_name(name: str) -> ModelProfile | None:
     return None
 
 
-def _gpu_matches_profile(match: GpuMatch, gpu: GpuInfo) -> bool:
+def gpu_matches_profile(match: GpuMatch, gpu: GpuInfo) -> bool:
     """True iff the given physical GPU satisfies `match`."""
     allowed_backends = (
         {b for b in match.backends}
@@ -360,7 +360,7 @@ def matching_gpu_profiles(
     for p in all_profiles():
         if p.gpu_match is None:
             continue
-        physical_match = any(_gpu_matches_profile(p.gpu_match, g) for g in sysinfo.gpus)
+        physical_match = any(gpu_matches_profile(p.gpu_match, g) for g in sysinfo.gpus)
         if not physical_match:
             continue
         if not _runtime_devices_satisfy(p.gpu_match, runtime_devices):

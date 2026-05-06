@@ -8,6 +8,7 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import click
@@ -22,7 +23,7 @@ from llm_bench import __version__, storage
 from llm_bench import devices as device_probe
 from llm_bench import models as model_registry
 from llm_bench import sysinfo as sysinfo_mod
-from llm_bench.llama_server import LlamaServerClient, LlamaServerError
+from llm_bench.llama_server import LlamaServerClient
 from llm_bench.llama_server_runner import run_llama_server_benchmark
 from llm_bench.lm_studio import LMStudioClient, LMStudioError
 from llm_bench.lm_studio_runner import run_lm_studio_benchmark
@@ -148,7 +149,7 @@ def _print_gpu_profile_notice(
     matched_gpu = ""
     if chosen.gpu_match is not None:
         for g in sysinfo.gpus:
-            if model_registry._gpu_matches_profile(chosen.gpu_match, g):
+            if model_registry.gpu_matches_profile(chosen.gpu_match, g):
                 matched_gpu = g.name
                 break
     detail = f" — matched {matched_gpu}" if matched_gpu else ""
@@ -491,17 +492,7 @@ def run(
             sys.exit(1)
 
         ls_client = LlamaServerClient(server_url)
-        # Connectivity probe — try /health first, fall back to /props since older
-        # builds don't expose /health. Either succeeding means the server is up.
-        reachable = False
-        for probe_path in ("/health", "/props"):
-            try:
-                ls_client._request("GET", probe_path)
-                reachable = True
-                break
-            except LlamaServerError:
-                continue
-        if not reachable:
+        if not ls_client.is_reachable():
             console.print(
                 f"[bold red]Error:[/bold red] cannot reach llama-server at {server_url}. "
                 "Is `llama-server` running on this URL?"
@@ -519,8 +510,8 @@ def run(
         else:
             raw = f"{label}:{server_url}"
             hw_fingerprint = hashlib.sha256(raw.encode()).hexdigest()[:16]
-        loaded_ids_list = []
-        loaded_ids = set()
+        loaded_ids_list: list[str] = []
+        loaded_ids: set[str] = set()
     else:
         bench_path = Path(llama_bench)
         if not bench_path.exists():
@@ -574,7 +565,7 @@ def run(
                         )
         bench_version = get_llama_bench_version(llama_bench, env_overrides or None)
         hw_fingerprint = None
-        loaded_ids = set()
+        loaded_ids: set[str] = set()
 
     # ── Sysinfo / header panels ───────────────────────────────────────────
     is_remote_http = backend in ("lm-studio", "llama-server") and not _is_local_url(server_url)
@@ -662,22 +653,22 @@ def run(
 
     completed_lines: list[str] = []
     recent_log: deque[str] = deque(maxlen=6)
-    _state: dict = {"label": "", "name": "", "t0": 0.0, "active": False}
+    _state: dict[str, Any] = {"label": "", "name": "", "t0": 0.0, "active": False}
     _spinner = Spinner("dots", style="bold cyan")
 
     def _make_live() -> Group:
-        rows: list = []
+        rows: list[Any] = []
         for ln in completed_lines:
             rows.append(Text.from_markup(ln))
         if _state["active"]:
-            elapsed = time.monotonic() - _state["t0"]
+            elapsed = time.monotonic() - cast(float, _state["t0"])
             m, s = divmod(int(elapsed), 60)
             frame = _spinner.render(time.monotonic())
             header = Text()
             header.append("  ")
-            header.append_text(frame)  # type: ignore[arg-type]
+            header.append_text(cast(Text, frame))
             header.append(f"  {_state['label']} ", style="dim")
-            header.append(_state["name"], style="bold")
+            header.append(cast(str, _state["name"]), style="bold")
             header.append(f"  {m}:{s:02d}", style="dim")
             rows.append(header)
             log_text = Text()
@@ -690,7 +681,7 @@ def run(
         return Group(*rows) if rows else Group(Text(""))
 
     class _Renderable:
-        def __rich__(self) -> Group:  # type: ignore[override]
+        def __rich__(self) -> Group:
             return _make_live()
 
     with Live(_Renderable(), console=console, refresh_per_second=8):

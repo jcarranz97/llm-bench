@@ -1,5 +1,6 @@
 """Tests for llm_bench.storage (uses tmp_path, never touches ~/.llm-bench)."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -118,7 +119,7 @@ def test_default_backend_keeps_old_cache_key() -> None:
 def test_backend_changes_cache_key() -> None:
     """Switching backend to 'lm-studio' must produce a different cache key."""
     base = _make_meta()
-    lm = RunMeta(**{**base.__dict__, "backend": "lm-studio"})
+    lm = replace(base, backend="lm-studio")
     assert base.config_fingerprint() != lm.config_fingerprint()
 
 
@@ -126,15 +127,15 @@ def test_env_vars_isolate_cache_key() -> None:
     """HIP_VISIBLE_DEVICES=0 vs =1 must NOT share cached results."""
     a = _make_meta()
     a.env_vars = {"HIP_VISIBLE_DEVICES": "0"}
-    b = RunMeta(**{**a.__dict__, "env_vars": {"HIP_VISIBLE_DEVICES": "1"}})
+    b = replace(a, env_vars={"HIP_VISIBLE_DEVICES": "1"})
     assert a.model_cache_key("org/model-a") != b.model_cache_key("org/model-a")
 
 
 def test_empty_env_vars_keeps_old_cache_key() -> None:
     """Adding env_vars=None or {} must NOT change the cache key for existing runs."""
     base = _make_meta()
-    with_empty = RunMeta(**{**base.__dict__, "env_vars": {}})
-    with_none = RunMeta(**{**base.__dict__, "env_vars": None})
+    with_empty = replace(base, env_vars={})
+    with_none = replace(base, env_vars=None)
     assert base.config_fingerprint() == with_empty.config_fingerprint()
     assert base.config_fingerprint() == with_none.config_fingerprint()
 
@@ -143,7 +144,7 @@ def test_env_vars_order_independent() -> None:
     """Two equivalent env dicts in different insertion orders must hash the same."""
     a = _make_meta()
     a.env_vars = {"HIP_VISIBLE_DEVICES": "0", "OTHER": "x"}
-    b = RunMeta(**{**a.__dict__, "env_vars": {"OTHER": "x", "HIP_VISIBLE_DEVICES": "0"}})
+    b = replace(a, env_vars={"OTHER": "x", "HIP_VISIBLE_DEVICES": "0"})
     assert a.config_fingerprint() == b.config_fingerprint()
 
 
@@ -216,7 +217,7 @@ def test_label_isolates_two_machines() -> None:
     a.label = "desktop"
     a.server_url = "http://localhost:1234"
 
-    b = RunMeta(**{**a.__dict__, "label": "homelab"})
+    b = replace(a, label="homelab")
     assert a.model_cache_key("qwen/qwen3-4b") != b.model_cache_key("qwen/qwen3-4b")
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, cast
 
 
 @dataclass
@@ -21,7 +21,7 @@ class BenchResult:
     tg_avg_ts: float | None = None
     tg_std_ts: float | None = None
     error: str | None = None
-    extra_args: list[str] = field(default_factory=list)
+    extra_args: list[str] = field(default_factory=list[str])
 
     @property
     def model_size_gib(self) -> float:
@@ -43,9 +43,9 @@ def extract_json(text: str) -> list[dict[str, Any]]:
     """Extract a JSON array from llama-bench stdout, tolerating any surrounding noise."""
     stripped = text.strip()
     try:
-        result = json.loads(stripped)
+        result: Any = json.loads(stripped)
         if isinstance(result, list):
-            return result
+            return cast(list[dict[str, Any]], result)
     except json.JSONDecodeError:
         pass
     # Find the outermost [...] block
@@ -55,7 +55,7 @@ def extract_json(text: str) -> list[dict[str, Any]]:
         try:
             result = json.loads(stripped[start : end + 1])
             if isinstance(result, list):
-                return result
+                return cast(list[dict[str, Any]], result)
         except json.JSONDecodeError:
             pass
     return []

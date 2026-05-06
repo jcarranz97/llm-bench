@@ -73,9 +73,10 @@ def test_pp_tg_probe_computes_pp_from_ttft_and_tg_from_tps() -> None:
         on_status=lambda s: None,
     )
     assert result.error is None
-    assert result.pp_avg_ts == pytest.approx((400.0 + 500.0) / 2)
+    approx = pytest.approx  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert result.pp_avg_ts == approx((400.0 + 500.0) / 2)
     assert result.pp_std_ts is not None and result.pp_std_ts > 0
-    assert result.tg_avg_ts == pytest.approx((30.0 + 32.0) / 2)
+    assert result.tg_avg_ts == approx((30.0 + 32.0) / 2)
     assert result.backend == "lm-studio"
     # First two calls are pp probes — max_output_tokens > 1 is required because
     # LM Studio reports TTFT as 0 when only one token is generated.
@@ -99,7 +100,8 @@ def test_single_probe_only_fills_tg() -> None:
     )
     assert result.error is None
     assert result.pp_avg_ts is None
-    assert result.tg_avg_ts == pytest.approx((25.0 + 27.0 + 26.0) / 3)
+    approx = pytest.approx  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert result.tg_avg_ts == approx((25.0 + 27.0 + 26.0) / 3)
     assert all(c["max_output_tokens"] is None for c in client.calls)
 
 

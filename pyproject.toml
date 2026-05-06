@@ -59,4 +59,4 @@ addopts = "-p no:launch_testing -p no:launch_testing_ros_pytest_entrypoint -p no
 [tool.pyright]
 include = ["src", "tests"]
 pythonVersion = "3.11"
-typeCheckingMode = "basic"
+typeCheckingMode = "strict"

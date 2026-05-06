@@ -8,6 +8,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
 
 @dataclass
@@ -24,7 +25,7 @@ class SystemInfo:
     total_ram_gb: float
     available_ram_gb: float
     os: str
-    gpus: list[GpuInfo] = field(default_factory=list)
+    gpus: list[GpuInfo] = field(default_factory=list[GpuInfo])
     cpu_physical_cores: int = 0  # physical cores (0 = unknown)
 
     @property
@@ -53,9 +54,9 @@ def _proc_cpuinfo_model() -> str:
 
 def _detect_cpu_model() -> str:
     try:
-        import cpuinfo  # type: ignore[import-untyped]
+        import cpuinfo  # pyright: ignore[reportMissingImports, reportMissingTypeStubs]
 
-        info = cpuinfo.get_cpu_info()
+        info = cast(dict[str, Any], cpuinfo.get_cpu_info())  # pyright: ignore[reportUnknownMemberType]
         brand = str(info.get("brand_raw", ""))
         # py-cpuinfo sometimes returns the arch string (e.g. "x86_64") on WSL;
         # treat that as a miss and fall through to /proc/cpuinfo.
@@ -78,7 +79,7 @@ def _detect_nvidia_gpus() -> list[GpuInfo]:
             stderr=subprocess.DEVNULL,
             timeout=5,
         )
-        gpus = []
+        gpus: list[GpuInfo] = []
         for line in out.strip().splitlines():
             parts = [p.strip() for p in line.split(",")]
             name = parts[0] if parts else "Unknown NVIDIA GPU"
@@ -97,7 +98,7 @@ def _detect_amd_gpus() -> list[GpuInfo]:
             stderr=subprocess.DEVNULL,
             timeout=5,
         )
-        gpus = []
+        gpus: list[GpuInfo] = []
         for line in out.strip().splitlines()[1:]:  # skip header
             name = line.strip().split(",")[-1].strip()
             if name:

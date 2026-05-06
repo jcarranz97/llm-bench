@@ -39,7 +39,9 @@ class _FakeClient(LlamaServerClient):
         return nxt
 
 
-def _timings(prompt_per_second: float = 250.0, predicted_per_second: float = 35.0) -> dict:
+def _timings(
+    prompt_per_second: float = 250.0, predicted_per_second: float = 35.0
+) -> dict[str, Any]:
     return {
         "timings": {
             "prompt_n": 128,
@@ -70,8 +72,9 @@ def test_pp_tg_probe_reads_timings_directly() -> None:
         on_status=lambda s: None,
     )
     assert result.error is None
-    assert result.pp_avg_ts == pytest.approx((240.0 + 260.0) / 2)
-    assert result.tg_avg_ts == pytest.approx((34.0 + 36.0) / 2)
+    approx = pytest.approx  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert result.pp_avg_ts == approx((240.0 + 260.0) / 2)
+    assert result.tg_avg_ts == approx((34.0 + 36.0) / 2)
     assert result.backend == "llama-server"
     # pp probes use n_predict=1, tg probes use n_predict=n_gen
     assert client.calls[0]["n_predict"] == 1
@@ -99,8 +102,9 @@ def test_single_probe_fills_both_pp_and_tg() -> None:
         on_status=lambda s: None,
     )
     assert result.error is None
-    assert result.pp_avg_ts == pytest.approx((200.0 + 210.0) / 2)
-    assert result.tg_avg_ts == pytest.approx((30.0 + 32.0) / 2)
+    approx = pytest.approx  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert result.pp_avg_ts == approx((200.0 + 210.0) / 2)
+    assert result.tg_avg_ts == approx((30.0 + 32.0) / 2)
     # Single probe always uses n_predict=n_gen
     assert all(c["n_predict"] == 200 for c in client.calls)
 

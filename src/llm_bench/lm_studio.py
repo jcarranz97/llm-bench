@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, cast
 
 
 class LMStudioError(RuntimeError):
@@ -50,11 +50,14 @@ class LMStudioClient:
             # Server bodies are JSON like {"error": {"message": "..."}} — flatten to one line.
             msg = detail
             try:
-                parsed_err = json.loads(detail)
+                parsed_err: Any = json.loads(detail)
                 if isinstance(parsed_err, dict):
-                    err = parsed_err.get("error")
-                    if isinstance(err, dict) and isinstance(err.get("message"), str):
-                        msg = err["message"]
+                    parsed_err_dict = cast(dict[str, Any], parsed_err)
+                    err = parsed_err_dict.get("error")
+                    if isinstance(err, dict) and isinstance(
+                        cast(dict[str, Any], err).get("message"), str
+                    ):
+                        msg = cast(str, cast(dict[str, Any], err)["message"])
                     elif isinstance(err, str):
                         msg = err
             except (json.JSONDecodeError, ValueError):
@@ -64,12 +67,12 @@ class LMStudioClient:
         except urllib.error.URLError as e:
             raise LMStudioError(f"Cannot reach {url}: {e.reason}") from e
         try:
-            parsed = json.loads(payload) if payload else {}
+            parsed: Any = json.loads(payload) if payload else {}
         except json.JSONDecodeError as e:
             raise LMStudioError(f"Non-JSON response from {url}: {payload[:200]}") from e
         if not isinstance(parsed, dict):
             raise LMStudioError(f"Expected JSON object from {url}, got {type(parsed).__name__}")
-        return parsed
+        return cast(dict[str, Any], parsed)
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -87,7 +90,7 @@ class LMStudioClient:
             for key in ("models", "data"):
                 arr = resp.get(key)
                 if isinstance(arr, list):
-                    return arr
+                    return cast(list[dict[str, Any]], arr)
         raise LMStudioError(
             f"Could not list models — neither /api/v1/models nor /api/v0/models worked at "
             f"{self.base_url}. Is LM Studio running with the local server enabled?"
@@ -111,9 +114,11 @@ class LMStudioClient:
         """Extract a chat-usable identifier from a model list entry (v1 or v0 shape)."""
         instances = entry.get("loaded_instances")
         if isinstance(instances, list) and instances:
-            inst_id = instances[0].get("id")
-            if inst_id:
-                return str(inst_id)
+            first = cast(list[Any], instances)[0]
+            if isinstance(first, dict):
+                inst_id = cast(dict[str, Any], first).get("id")
+                if inst_id:
+                    return str(inst_id)
         return str(entry.get("id") or entry.get("key") or entry.get("model") or "")
 
     @staticmethod
@@ -121,7 +126,7 @@ class LMStudioClient:
         """True if a model list entry represents a currently-loaded instance."""
         instances = entry.get("loaded_instances")
         if isinstance(instances, list):
-            return len(instances) > 0
+            return len(cast(list[Any], instances)) > 0
         # Fallback for /api/v0 shape
         state = entry.get("state", "")
         return state in ("loaded", "")

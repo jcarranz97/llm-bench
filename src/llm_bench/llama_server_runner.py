@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import statistics
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from llm_bench.llama_server import LlamaServerClient, LlamaServerError
 from llm_bench.parser import BenchResult
@@ -55,7 +55,9 @@ def _mean_std(values: list[float]) -> tuple[float, float]:
 
 def _timings(resp: dict[str, Any]) -> dict[str, Any]:
     t = resp.get("timings")
-    return t if isinstance(t, dict) else {}
+    if isinstance(t, dict):
+        return cast(dict[str, Any], t)
+    return {}
 
 
 def run_llama_server_benchmark(

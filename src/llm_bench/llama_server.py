@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, cast
 
 
 class LlamaServerError(RuntimeError):
@@ -49,15 +49,18 @@ class LlamaServerClient:
                 detail = ""
             msg = detail
             try:
-                parsed_err = json.loads(detail)
+                parsed_err: Any = json.loads(detail)
                 if isinstance(parsed_err, dict):
-                    err = parsed_err.get("error")
-                    if isinstance(err, dict) and isinstance(err.get("message"), str):
-                        msg = err["message"]
+                    parsed_err_dict = cast(dict[str, Any], parsed_err)
+                    err = parsed_err_dict.get("error")
+                    if isinstance(err, dict) and isinstance(
+                        cast(dict[str, Any], err).get("message"), str
+                    ):
+                        msg = cast(str, cast(dict[str, Any], err)["message"])
                     elif isinstance(err, str):
                         msg = err
-                    elif isinstance(parsed_err.get("message"), str):
-                        msg = parsed_err["message"]
+                    elif isinstance(parsed_err_dict.get("message"), str):
+                        msg = cast(str, parsed_err_dict["message"])
             except (json.JSONDecodeError, ValueError):
                 pass
             msg = " ".join(msg.split())
@@ -65,12 +68,12 @@ class LlamaServerClient:
         except urllib.error.URLError as e:
             raise LlamaServerError(f"Cannot reach {url}: {e.reason}") from e
         try:
-            parsed = json.loads(payload) if payload else {}
+            parsed: Any = json.loads(payload) if payload else {}
         except json.JSONDecodeError as e:
             raise LlamaServerError(f"Non-JSON response from {url}: {payload[:200]}") from e
         if not isinstance(parsed, dict):
             raise LlamaServerError(f"Expected JSON object from {url}, got {type(parsed).__name__}")
-        return parsed
+        return cast(dict[str, Any], parsed)
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -80,6 +83,16 @@ class LlamaServerClient:
         Some llama-server versions don't expose this; callers should handle errors.
         """
         return self._request("GET", "/props")
+
+    def is_reachable(self) -> bool:
+        """Connectivity probe: try /health first, fall back to /props (older builds)."""
+        for probe_path in ("/health", "/props"):
+            try:
+                self._request("GET", probe_path)
+                return True
+            except LlamaServerError:
+                continue
+        return False
 
     def server_version(self) -> str:
         """Best-effort server identifier from /props build_info. Falls back to 'llama-server'."""
@@ -105,7 +118,7 @@ class LlamaServerClient:
             return None
         raw = p.get("devices")
         if isinstance(raw, list):
-            return [d for d in raw if isinstance(d, dict)]
+            return [cast(dict[str, Any], d) for d in cast(list[Any], raw) if isinstance(d, dict)]
         return None
 
     def model_id(self) -> str:
@@ -129,9 +142,11 @@ class LlamaServerClient:
             v1 = self._request("GET", "/v1/models")
             data = v1.get("data")
             if isinstance(data, list) and data:
-                first_id = data[0].get("id")
-                if isinstance(first_id, str) and first_id:
-                    return first_id
+                first = cast(list[Any], data)[0]
+                if isinstance(first, dict):
+                    first_id = cast(dict[str, Any], first).get("id")
+                    if isinstance(first_id, str) and first_id:
+                        return first_id
         except LlamaServerError:
             pass
         return "llama-server-model"
