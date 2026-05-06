@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from llm_bench.cli import _llama_bench_models_from_csv
+import pytest
+
+from llm_bench.cli import _llama_bench_models_from_csv  # pyright: ignore[reportPrivateUsage]
 
 
 def test_csv_detects_existing_local_gguf(tmp_path: Path) -> None:
@@ -47,7 +49,7 @@ def test_csv_strips_whitespace_and_skips_empty() -> None:
     assert [m.hf_repo for m in out] == ["ggml-org/foo", "ggml-org/bar"]
 
 
-def test_csv_expands_user_home(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_csv_expands_user_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`~` in paths must be expanded so cache keys / -m args don't contain literal `~`."""
     monkeypatch.setenv("HOME", str(tmp_path))
     gguf = tmp_path / "model.gguf"

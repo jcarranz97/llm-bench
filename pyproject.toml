@@ -41,7 +41,6 @@ packages = ["src/llm_bench"]
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",
-    "mypy>=1.10",
     "pyright>=1.1",
     "types-pyyaml",
     "types-psutil",
@@ -57,6 +56,7 @@ select = ["E", "F", "I", "UP"]
 [tool.pytest.ini_options]
 addopts = "-p no:launch_testing -p no:launch_testing_ros_pytest_entrypoint -p no:ament_copyright -p no:ament_flake8 -p no:ament_lint -p no:ament_pep257 -p no:ament_xmllint"
 
-[tool.mypy]
-python_version = "3.11"
-strict = true
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"

@@ -13,9 +13,9 @@ import re
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
-from llm_bench.runner import _build_env
+from llm_bench.runner import build_env
 
 if TYPE_CHECKING:
     from llm_bench.llama_server import LlamaServerClient
@@ -103,7 +103,7 @@ def llama_bench_devices(
             capture_output=True,
             text=True,
             timeout=10,
-            env=_build_env(env_vars),
+            env=build_env(env_vars),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -143,9 +143,10 @@ def llama_server_devices(client: LlamaServerClient) -> list[RuntimeDevice] | Non
     if not isinstance(raw, list) or not raw:
         return None
     devices: list[RuntimeDevice] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
+    for entry_raw in cast(list[Any], raw):
+        if not isinstance(entry_raw, dict):
             continue
+        entry = cast(dict[str, Any], entry_raw)
         name = str(entry.get("name") or entry.get("id") or "")
         desc = str(entry.get("description") or entry.get("name") or name)
         backend = str(entry.get("backend") or _prefix_backend(name))

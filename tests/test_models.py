@@ -10,8 +10,8 @@ from llm_bench.models import (
     GpuMatch,
     Model,
     ModelProfile,
-    _gpu_matches_profile,
     get_profile_by_name,
+    gpu_matches_profile,
     load_profile_from_file,
     matching_gpu_profiles,
     select_profile,
@@ -246,8 +246,8 @@ def test_gpu_matches_profile_substring_case_insensitive() -> None:
     match = GpuMatch(vendor="amd", name_contains=["RX 7900 XT"], backends=["ROCm"])
     rocm_card = GpuInfo(name="AMD Radeon RX 7900 XT", vram_gb=20.0, backend="ROCm")
     other_card = GpuInfo(name="AMD Radeon RX 6800", vram_gb=16.0, backend="ROCm")
-    assert _gpu_matches_profile(match, rocm_card)
-    assert not _gpu_matches_profile(match, other_card)
+    assert gpu_matches_profile(match, rocm_card)
+    assert not gpu_matches_profile(match, other_card)
 
 
 def test_gpu_matches_profile_uses_default_backends() -> None:
@@ -255,8 +255,8 @@ def test_gpu_matches_profile_uses_default_backends() -> None:
     match = GpuMatch(vendor="amd", name_contains=["RX 7900 XT"])
     rocm_card = GpuInfo(name="Radeon RX 7900 XT", vram_gb=20.0, backend="ROCm")
     cuda_card = GpuInfo(name="Radeon RX 7900 XT impostor", vram_gb=20.0, backend="CUDA")
-    assert _gpu_matches_profile(match, rocm_card)
-    assert not _gpu_matches_profile(match, cuda_card)
+    assert gpu_matches_profile(match, rocm_card)
+    assert not gpu_matches_profile(match, cuda_card)
 
 
 def test_gpu_matches_profile_respects_min_vram() -> None:
@@ -264,13 +264,15 @@ def test_gpu_matches_profile_respects_min_vram() -> None:
     big = GpuInfo(name="RX 7900 XT", vram_gb=20.0, backend="ROCm")
     small = GpuInfo(name="RX 7900 XT", vram_gb=12.0, backend="ROCm")
     unknown = GpuInfo(name="RX 7900 XT", vram_gb=None, backend="ROCm")
-    assert _gpu_matches_profile(match, big)
-    assert not _gpu_matches_profile(match, small)
+    assert gpu_matches_profile(match, big)
+    assert not gpu_matches_profile(match, small)
     # Unknown VRAM is treated as "allow" so partial detection (lspci-only) doesn't lock users out.
-    assert _gpu_matches_profile(match, unknown)
+    assert gpu_matches_profile(match, unknown)
 
 
-def test_select_profile_excludes_gpu_specific(monkeypatch, tmp_path: Path) -> None:
+def test_select_profile_excludes_gpu_specific(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """select_profile() must never auto-pick a profile that has gpu_match set."""
     yaml_path = tmp_path / "models" / "specific" / "amd" / "card.yaml"
     yaml_path.parent.mkdir(parents=True)
@@ -296,7 +298,9 @@ models:
     assert chosen.profile != "gpu_amd_card"
 
 
-def test_matching_gpu_profiles_filters_by_physical_gpu(monkeypatch, tmp_path: Path) -> None:
+def test_matching_gpu_profiles_filters_by_physical_gpu(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """matching_gpu_profiles returns only profiles whose gpu_match fits a physical GPU."""
     amd_yaml = tmp_path / "specific" / "amd" / "card.yaml"
     nv_yaml = tmp_path / "specific" / "nvidia" / "card.yaml"
@@ -343,7 +347,7 @@ models:
 
 
 def test_matching_gpu_profiles_warn_and_proceed_when_devices_none(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """runtime_devices=None means the probe couldn't run — match should still apply."""
     yaml_path = tmp_path / "specific" / "amd" / "card.yaml"
@@ -370,7 +374,7 @@ models:
 
 
 def test_matching_gpu_profiles_skips_when_runtime_doesnt_see_card(
-    monkeypatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An empty runtime_devices list (probe ran but found nothing) blocks the match."""
     from llm_bench.devices import RuntimeDevice
@@ -409,7 +413,9 @@ models:
     assert any(p.profile == "gpu_amd_blocked" for p in matches)
 
 
-def test_recursive_loader_finds_subdirectory_yamls(monkeypatch, tmp_path: Path) -> None:
+def test_recursive_loader_finds_subdirectory_yamls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """User profiles placed under specific/<vendor>/ should be discovered."""
     nested = tmp_path / "specific" / "amd" / "RX9999.yaml"
     nested.parent.mkdir(parents=True)

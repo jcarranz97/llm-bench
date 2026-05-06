@@ -7,7 +7,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from llm_bench.parser import BenchResult
 from llm_bench.sysinfo import SystemInfo
@@ -113,7 +113,7 @@ def save_run(meta: RunMeta, results: list[BenchResult], cached_flags: dict[str, 
 
     (run_dir / "meta.json").write_text(json.dumps(meta.to_dict(), indent=2))
 
-    payload = []
+    payload: list[dict[str, Any]] = []
     for r in results:
         d = r.to_dict()
         d["_cached"] = cached_flags.get(r.hf_repo, False)
@@ -125,12 +125,12 @@ def save_run(meta: RunMeta, results: list[BenchResult], cached_flags: dict[str, 
 
 def load_run(run_id: str) -> tuple[RunMeta, list[BenchResult], dict[str, bool]]:
     run_dir = _RESULTS_DIR / run_id
-    meta = RunMeta.from_dict(json.loads((run_dir / "meta.json").read_text()))
-    raw = json.loads((run_dir / "results.json").read_text())
-    results = []
+    meta = RunMeta.from_dict(cast(dict[str, Any], json.loads((run_dir / "meta.json").read_text())))
+    raw = cast(list[dict[str, Any]], json.loads((run_dir / "results.json").read_text()))
+    results: list[BenchResult] = []
     cached: dict[str, bool] = {}
     for d in raw:
-        was_cached = d.pop("_cached", False)
+        was_cached = bool(d.pop("_cached", False))
         r = BenchResult.from_dict(d)
         results.append(r)
         cached[r.hf_repo] = was_cached
@@ -139,12 +139,14 @@ def load_run(run_id: str) -> tuple[RunMeta, list[BenchResult], dict[str, bool]]:
 
 def list_runs() -> list[RunMeta]:
     _ensure_dirs()
-    metas = []
+    metas: list[RunMeta] = []
     for run_dir in sorted(_RESULTS_DIR.iterdir(), reverse=True):
         meta_file = run_dir / "meta.json"
         if meta_file.exists():
             try:
-                metas.append(RunMeta.from_dict(json.loads(meta_file.read_text())))
+                metas.append(
+                    RunMeta.from_dict(cast(dict[str, Any], json.loads(meta_file.read_text())))
+                )
             except Exception:
                 pass
     return metas

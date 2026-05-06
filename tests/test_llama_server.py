@@ -5,7 +5,8 @@ from __future__ import annotations
 import io
 import json
 import urllib.error
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 import pytest
 
@@ -27,10 +28,14 @@ class _FakeResponse:
         return None
 
 
-def _install_fake_urlopen(monkeypatch: pytest.MonkeyPatch, handler) -> None:
-    def fake_urlopen(req, timeout=None):  # type: ignore[no-untyped-def]
-        url = req.full_url if hasattr(req, "full_url") else str(req)
-        body = req.data.decode("utf-8") if getattr(req, "data", None) else None
+_Handler = Callable[[str, str | None], _FakeResponse]
+
+
+def _install_fake_urlopen(monkeypatch: pytest.MonkeyPatch, handler: _Handler) -> None:
+    def fake_urlopen(req: Any, timeout: float | None = None) -> _FakeResponse:
+        url = cast(str, req.full_url if hasattr(req, "full_url") else str(req))
+        data = cast(bytes | None, getattr(req, "data", None))
+        body = data.decode("utf-8") if data else None
         return handler(url, body)
 
     monkeypatch.setattr(llama_server_mod.urllib.request, "urlopen", fake_urlopen)

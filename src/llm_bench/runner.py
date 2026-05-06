@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 
-def _build_env(env_vars: Mapping[str, str] | None) -> dict[str, str] | None:
+def build_env(env_vars: Mapping[str, str] | None) -> dict[str, str] | None:
     """Layer overrides on top of the parent env. Returns None when no overrides."""
     if not env_vars:
         return None
@@ -18,7 +18,7 @@ def _build_env(env_vars: Mapping[str, str] | None) -> dict[str, str] | None:
 
 def get_llama_bench_version(llama_bench: str, env_vars: Mapping[str, str] | None = None) -> str:
     """Return the build version string from llama-bench, or 'unknown'."""
-    env = _build_env(env_vars)
+    env = build_env(env_vars)
     try:
         result = subprocess.run(
             [llama_bench, "--version"],
@@ -105,7 +105,7 @@ def run_benchmark(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=_build_env(env_vars),
+        env=build_env(env_vars),
     )
 
     stderr_lines: list[str] = []

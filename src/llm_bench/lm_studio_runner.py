@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import statistics
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from llm_bench.lm_studio import LMStudioClient, LMStudioError
 from llm_bench.parser import BenchResult
@@ -46,7 +46,7 @@ def _filler_prompt(approx_tokens: int) -> str:
         "takes to ingest a fixed number of input tokens before the first output. "
     )
     target_chars = max(approx_tokens, 32) * 4
-    out = []
+    out: list[str] = []
     cur = 0
     while cur < target_chars:
         out.append(sentence)
@@ -64,7 +64,9 @@ def _mean_std(values: list[float]) -> tuple[float, float]:
 
 def _stats(resp: dict[str, Any]) -> dict[str, Any]:
     s = resp.get("stats")
-    return s if isinstance(s, dict) else {}
+    if isinstance(s, dict):
+        return cast(dict[str, Any], s)
+    return {}
 
 
 def run_lm_studio_benchmark(

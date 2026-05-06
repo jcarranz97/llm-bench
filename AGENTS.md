@@ -26,7 +26,7 @@ PYTHONPATH="" uv run pytest tests/test_storage.py::test_label_isolates_two_machi
 
 # Lint and type-check
 uv run ruff check src/ tests/
-uv run mypy src/
+uv run pyright .
 ```
 
 > `PYTHONPATH=""` is required because this machine has ROS installed, which injects broken pytest plugins. The `pyproject.toml` `addopts` disables them by name, but that only takes effect after pytest starts — the empty `PYTHONPATH` prevents the load-time crash.
