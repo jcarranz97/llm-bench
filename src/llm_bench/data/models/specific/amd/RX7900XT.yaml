@@ -1,0 +1,36 @@
+profile: gpu_amd_rx7900xt
+description: "AMD Radeon RX 7900 XT (Navi 31, 20 GB VRAM) — full-offload models"
+min_ram_gb: 16
+max_ram_gb: 9999
+
+# Activates only when (a) a physical GPU matching this block is detected
+# and (b) the active backend's runtime actually reports the card as usable
+# (llama-bench --list-devices, llama-server /props.devices, or `lms runtime ls`).
+gpu_match:
+  vendor: amd
+  name_contains:
+    - "RX 7900 XT"
+    - "Navi 31"
+    - "RX7900XT"
+  backends: [ROCm, Vulkan]
+  min_vram_gb: 18
+
+models:
+  # `-fitt 1024` asks llama-bench to auto-fit the model into VRAM with a 1 GB
+  # margin. Without it, llama-bench's default `-ngl 99` tries to put every
+  # layer on the GPU and OOMs for models that don't quite fit on 20 GB.
+  # `HIP_VISIBLE_DEVICES` is auto-set by llm-bench at run time based on which
+  # ROCm device matches this profile's gpu_match block — see cli.py.
+  - name: "qwen/qwen3.6-35b-a3b"
+    hf_repo: "lmstudio-community/Qwen3.6-35B-A3B-GGUF"
+    estimated_size_gb: 9.3
+    description: "35B MoE Qwen — runs comfortably on 20 GB VRAM"
+    extra_args: ["-fitt", "1024"]
+    tags: [large, qwen, gpu]
+
+  - name: "qwen3-coder-30b-a3b-instruct"
+    hf_repo: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
+    estimated_size_gb: 9.3
+    description: "30B MoE Qwen Coder"
+    extra_args: ["-fitt", "1024"]
+    tags: [large, qwen, coder, gpu]

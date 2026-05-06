@@ -162,6 +162,7 @@ The llama.cpp backend uses bundled YAML profiles (`low_ram.yaml`, `medium_ram.ya
    - LM Studio backend: defaults to the bundled `lm_studio.yaml`, but `--loaded-only` and `--all-available` discover models from the running server.
    - llama-server backend: auto-discovers the single loaded model from `/props`. Override the displayed name with `--models <id>`.
    - llama-bench backend: picks the best-fit YAML from `data/models/` based on RAM tier.
+   - **GPU-card-specific profiles** (e.g. AMD RX 7900 XT) override the RAM/backend default when the card is both physically detected *and* the active runtime reports it as available — see [GPU-specific profiles](#gpu-specific-profiles). Pass `--no-gpu-profiles` to skip this, or `--gpu-profile NAME` to pick one explicitly.
 3. **Cache lookup** — each `(hw_fingerprint, params, model)` triple is hashed; matches are shown instantly with a `(cached)` badge. The cache key includes the backend, server URL, and label, so results from different backends or different machines never collide.
 4. **Benchmark** —
    - LM Studio: POSTs to `/api/v1/chat` per probe, reads the `stats` block.
@@ -196,11 +197,86 @@ models:
 
 Each entry must specify at least one of `lm_studio_id` or `hf_repo`. Pass a file directly with `--models-file ~/my-models.yaml`, or rely on profile auto-discovery (matched by `profile` name).
 
+For per-GPU-card profiles (e.g. a model list tuned for an AMD RX 7900 XT or NVIDIA RTX 4090), drop the YAML into `~/.llm-bench/models/specific/<vendor>/<card>.yaml` and add a `gpu_match` block — see [GPU-specific profiles](#gpu-specific-profiles).
+
 To find the IDs you have loaded in LM Studio:
 
 ```bash
 curl http://localhost:1234/api/v1/models | jq '.data[].id // .models[].key'
 ```
+
+## GPU-specific profiles
+
+Some workloads only make sense on a particular card — e.g. a 35B model that fits on an RX 7900 XT's 20 GB VRAM but won't on a 12 GB card. Drop a YAML under `specific/<vendor>/<card>.yaml` to define a profile that activates only when that exact card is present:
+
+```
+src/llm_bench/data/models/             ← bundled
+    specific/
+        amd/RX7900XT.yaml
+        nvidia/RTX4090.yaml          ← (future)
+~/.llm-bench/models/                   ← user overrides (same layout)
+    specific/
+        amd/RX7900XT.yaml
+```
+
+Each file uses the regular profile schema plus a `gpu_match:` block:
+
+```yaml
+profile: gpu_amd_rx7900xt
+description: "AMD Radeon RX 7900 XT (Navi 31, 20 GB VRAM) — full-offload models"
+min_ram_gb: 16
+max_ram_gb: 9999
+
+gpu_match:
+  vendor: amd                                # amd | nvidia | apple | intel
+  name_contains: ["RX 7900 XT", "Navi 31"]   # any-of, case-insensitive substring
+  backends: [ROCm, Vulkan]                   # restrict to a runtime; optional
+  min_vram_gb: 18                            # optional VRAM threshold
+
+models:
+  - name: "Qwen3.6-35B-A3B"
+    hf_repo: "lmstudio-community/Qwen3.6-35B-A3B-GGUF"
+    estimated_size_gb: 9.3
+    extra_args: "-ngl 99"                    # full GPU offload — safe here
+```
+
+**Selection rules.** A GPU-specific profile **replaces** the RAM-based / backend default when *both* of the following are true:
+
+1. **Physical detection.** Some `GpuInfo` entry from `nvidia-smi` / `rocm-smi` / `system_profiler` / `lspci` matches the `gpu_match` block (vendor + at least one `name_contains` substring + VRAM threshold).
+2. **Runtime confirmation.** The active backend itself sees the card as usable:
+   - `--backend llama-bench` → `llama-bench --list-devices` lists a matching device.
+   - `--backend llama-server` → `/props.devices` (newer builds) lists a matching device.
+   - `--backend lm-studio` → `lms runtime ls` shows a runtime whose backend matches the card's vendor (e.g. `rocm-llama.cpp` for AMD).
+
+When the runtime probe can't run (older binary that doesn't accept `--list-devices`, missing endpoint, `lms` not installed), `llm-bench` warns and proceeds with physical detection only — the goal is to never silently disable GPU profiles because of a missing query.
+
+**Auto-pinned device env var (llama-bench backend).** When a GPU profile activates and the runtime probe identifies which device it bound to (e.g. `ROCm0` on a system where the dGPU is index 0, but `ROCm1` where it's index 1), `llm-bench` auto-sets the corresponding pinning env var for the llama-bench subprocess:
+
+| Vendor | Auto-set env var |
+|--------|------------------|
+| `amd` | `HIP_VISIBLE_DEVICES=<index>` |
+| `nvidia` | `CUDA_VISIBLE_DEVICES=<index>` |
+| `intel` | `GGML_VK_VISIBLE_DEVICES=<index>` |
+| `apple` | (none — Metal exposes a single device) |
+
+User-passed `--env KEY=VALUE` always wins over the auto-detect, so you can override on a per-run basis. The auto-set env var also shards the result cache (different indexes are different runs).
+
+For tuning flags that are static per card (e.g. `-fitt 1024` to leave a 1 GB VRAM margin), put them in the YAML's `extra_args:` field. The bundled `gpu_amd_rx7900xt` profile uses `extra_args: ["-fitt", "1024"]` so the largest models fit on 20 GB without OOM.
+
+**Flags.**
+
+```bash
+# Default: auto-pick the matching GPU profile if any
+llm-bench run
+
+# Skip the auto-detection
+llm-bench run --no-gpu-profiles
+
+# Pick a specific profile by name
+llm-bench run --gpu-profile gpu_amd_rx7900xt
+```
+
+You can preview which GPU profile would activate on the current machine with `llm-bench sysinfo` (it lists every GPU profile whose physical-detection check passes — actual selection at `run` time also requires the backend runtime to see the card).
 
 ## CLI Reference
 
@@ -235,6 +311,8 @@ llm-bench run [OPTIONS] [EXTRA_LLAMA_ARGS]...
     -r, --repetitions N       Repetitions per probe (default: 5)
     -p, --n-prompt N          Prompt token count for pp probe (default: 512)
     -n, --n-gen N             Generation token count for tg probe (default: 200)
+    --no-gpu-profiles         Disable auto-pick of GPU-card-specific profiles
+    --gpu-profile NAME        Run the named GPU-specific profile (repeatable)
     -o, --output FORMAT       table | json | markdown
 
   Any extra options after `--` are forwarded verbatim to llama-bench:

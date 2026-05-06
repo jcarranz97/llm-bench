@@ -19,6 +19,7 @@ from rich.spinner import Spinner
 from rich.text import Text
 
 from llm_bench import __version__, storage
+from llm_bench import devices as device_probe
 from llm_bench import models as model_registry
 from llm_bench import sysinfo as sysinfo_mod
 from llm_bench.llama_server import LlamaServerClient, LlamaServerError
@@ -81,6 +82,85 @@ def _ad_hoc_profile(models: list[Model], name: str = "ad-hoc") -> ModelProfile:
         max_ram_gb=9999,
         models=models,
         source_path=None,
+    )
+
+
+def _maybe_swap_in_gpu_profile(
+    primary: ModelProfile,
+    sysinfo: sysinfo_mod.SystemInfo,
+    runtime_devices: list[device_probe.RuntimeDevice] | None,
+    no_gpu_profiles: bool,
+    gpu_profile_names: tuple[str, ...],
+) -> tuple[ModelProfile, device_probe.RuntimeDevice | None]:
+    """Return `(profile, matched_runtime_device)` for the run.
+
+    The second element is the specific device the chosen profile bound to —
+    callers can use it (via `device_probe.auto_env_for_device`) to pin
+    `HIP_VISIBLE_DEVICES` / `CUDA_VISIBLE_DEVICES` to the right index. It's
+    `None` when no swap happened or when `runtime_devices` was unavailable
+    (warn-and-proceed).
+
+    Selection rules:
+      * `gpu_profile_names` non-empty → look up each by name; first hit wins.
+      * `no_gpu_profiles` true → never swap.
+      * Otherwise: probe physical GPUs ∩ runtime device list, swap to the
+        most-VRAM-restrictive matching profile if any.
+    """
+    if gpu_profile_names:
+        for name in gpu_profile_names:
+            candidate = model_registry.get_profile_by_name(name)
+            if candidate is not None and candidate.gpu_match is not None:
+                matched = model_registry.find_matched_runtime_device(
+                    candidate.gpu_match, runtime_devices
+                )
+                _print_gpu_profile_notice(
+                    candidate, primary, sysinfo, matched, "explicit override"
+                )
+                return candidate, matched
+            if candidate is None:
+                console.print(
+                    f"[yellow]⚠ --gpu-profile {name!r} not found, ignoring.[/yellow]"
+                )
+        return primary, None
+    if no_gpu_profiles:
+        return primary, None
+    matches = model_registry.matching_gpu_profiles(sysinfo, runtime_devices)
+    if not matches:
+        return primary, None
+    chosen = matches[0]
+    matched = (
+        model_registry.find_matched_runtime_device(chosen.gpu_match, runtime_devices)
+        if chosen.gpu_match is not None
+        else None
+    )
+    reason = (
+        "physical GPU + runtime device confirmed"
+        if runtime_devices is not None
+        else "physical GPU detected (runtime probe unavailable, proceeding anyway)"
+    )
+    _print_gpu_profile_notice(chosen, primary, sysinfo, matched, reason)
+    return chosen, matched
+
+
+def _print_gpu_profile_notice(
+    chosen: ModelProfile,
+    primary: ModelProfile,
+    sysinfo: sysinfo_mod.SystemInfo,
+    matched_device: device_probe.RuntimeDevice | None,
+    reason: str,
+) -> None:
+    matched_gpu = ""
+    if chosen.gpu_match is not None:
+        for g in sysinfo.gpus:
+            if model_registry._gpu_matches_profile(chosen.gpu_match, g):
+                matched_gpu = g.name
+                break
+    detail = f" — matched {matched_gpu}" if matched_gpu else ""
+    if matched_device is not None:
+        detail += f" [{matched_device.name}]"
+    console.print(
+        f"[cyan]→ Using GPU-specific profile [bold]{chosen.profile}[/bold] "
+        f"(replaces {primary.profile}{detail}; {reason})[/cyan]"
     )
 
 
@@ -216,6 +296,21 @@ def main() -> None:
     "Env-var overrides shard the result cache so different settings don't collide.",
 )
 @click.option(
+    "--no-gpu-profiles",
+    is_flag=True,
+    default=False,
+    help="Don't auto-pick a GPU-card-specific profile, even when one matches. "
+    "Forces the RAM/backend default profile.",
+)
+@click.option(
+    "--gpu-profile",
+    "gpu_profile_names",
+    multiple=True,
+    metavar="NAME",
+    help="Run the named GPU-specific profile (repeatable, picks the first found). "
+    "Implies --no-gpu-profiles auto-detection.",
+)
+@click.option(
     "--output",
     "-o",
     type=click.Choice(["table", "json", "markdown"], case_sensitive=False),
@@ -241,6 +336,8 @@ def run(
     hf_token: str | None,
     threads: int | None,
     env_pairs: tuple[str, ...],
+    no_gpu_profiles: bool,
+    gpu_profile_names: tuple[str, ...],
     output: str,
     extra_llama_args: tuple[str, ...],
 ) -> None:
@@ -345,7 +442,15 @@ def run(
                     "Pass --models, --models-file, --all-available, or --loaded-only."
                 )
                 sys.exit(1)
-            profile = named
+            profile, _ = _maybe_swap_in_gpu_profile(
+                named,
+                sysinfo,
+                runtime_devices=device_probe.lm_studio_runtimes(sysinfo),
+                no_gpu_profiles=no_gpu_profiles,
+                gpu_profile_names=gpu_profile_names,
+            )
+            # LM Studio is a remote process — auto-env doesn't propagate, so we
+            # discard the matched device. The user already started the server.
             # If the bundled profile doesn't match what's loaded, suggest a better path
             # rather than running through 5 guaranteed failures.
             in_profile = {m.identifier for m in profile.models}
@@ -445,7 +550,34 @@ def run(
         elif models_file:
             profile = model_registry.load_profile_from_file(models_file)
         else:
-            profile = model_registry.select_profile(sysinfo)
+            primary = model_registry.select_profile(sysinfo)
+            runtime_devs = device_probe.llama_bench_devices(
+                llama_bench, env_overrides or None
+            )
+            profile, matched_device = _maybe_swap_in_gpu_profile(
+                primary,
+                sysinfo,
+                runtime_devices=runtime_devs,
+                no_gpu_profiles=no_gpu_profiles,
+                gpu_profile_names=gpu_profile_names,
+            )
+            # When a GPU profile is chosen and the matched runtime device has
+            # an extractable index (e.g. ROCm0), auto-pin via HIP_VISIBLE_DEVICES /
+            # CUDA_VISIBLE_DEVICES. User --env overrides win over auto-pin.
+            if (
+                matched_device is not None
+                and profile.gpu_match is not None
+                and profile is not primary
+            ):
+                auto_env = device_probe.auto_env_for_device(
+                    matched_device, profile.gpu_match.vendor
+                )
+                for k, v in auto_env.items():
+                    if k not in env_overrides:
+                        env_overrides[k] = v
+                        console.print(
+                            f"[dim]  · auto-set {k}={v} (matched {matched_device.name})[/dim]"
+                        )
         bench_version = get_llama_bench_version(llama_bench, env_overrides or None)
         hw_fingerprint = None
         loaded_ids = set()
@@ -737,6 +869,21 @@ def sysinfo() -> None:
         )
         console.print(f"  {fit}  [bold]{m.name}[/bold]  [dim]~{m.estimated_size_gb:.1f} GiB[/dim]")
 
+    # GPU-specific profile preview — physical-detection only (no backend probe yet,
+    # since `sysinfo` doesn't know which backend the user will pick at `run` time).
+    gpu_matches = model_registry.matching_gpu_profiles(info, runtime_devices=None)
+    if gpu_matches:
+        console.print()
+        console.print(
+            "[bold]GPU profiles (physical-detection only — actual selection at "
+            "[cyan]run[/cyan] also requires the backend's runtime to see the card):[/bold]"
+        )
+        for gp in gpu_matches:
+            console.print(
+                f"  [cyan]{gp.profile}[/cyan]  —  {gp.description}  "
+                f"[dim]({len(gp.models)} models)[/dim]"
+            )
+
 
 # ── llm-bench models ──────────────────────────────────────────────────────────
 
@@ -752,6 +899,18 @@ def models_list() -> None:
     for p in model_registry.all_profiles():
         source = f"[dim]{p.source_path}[/dim]" if p.source_path else ""
         console.print(f"[bold cyan]{p.profile}[/bold cyan]  {p.description}  {source}")
+        if p.gpu_match is not None:
+            gm = p.gpu_match
+            parts = [f"vendor={gm.vendor}"]
+            if gm.name_contains:
+                parts.append(f"name~={gm.name_contains}")
+            if gm.name_regex:
+                parts.append(f"regex={gm.name_regex!r}")
+            if gm.backends:
+                parts.append(f"backends={gm.backends}")
+            if gm.min_vram_gb:
+                parts.append(f"min_vram_gb={gm.min_vram_gb}")
+            console.print(f"  [dim]gpu_match:[/dim] {'  '.join(parts)}")
         for m in p.models:
             console.print(
                 f"  [dim]·[/dim] {m.name}  "
