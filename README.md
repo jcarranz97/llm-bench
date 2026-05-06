@@ -361,7 +361,7 @@ PYTHONPATH="" uv run pytest tests/test_storage.py::test_label_isolates_two_machi
 
 ```bash
 uv run ruff check src/ tests/
-uv run mypy src/
+uv run pyright .
 ```
 
 ### Building a distributable package
