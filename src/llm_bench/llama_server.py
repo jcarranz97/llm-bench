@@ -92,6 +92,22 @@ class LlamaServerClient:
             return f"llama-server ({build})"
         return "llama-server"
 
+    def devices(self) -> list[dict[str, Any]] | None:
+        """Return the `devices` array from /props if the server exposes it.
+
+        Newer llama.cpp builds populate this with one entry per device the
+        runtime sees; older builds omit it. Returns `None` when the field is
+        absent or /props is unreachable, so callers can warn-and-proceed.
+        """
+        try:
+            p = self.props()
+        except LlamaServerError:
+            return None
+        raw = p.get("devices")
+        if isinstance(raw, list):
+            return [d for d in raw if isinstance(d, dict)]
+        return None
+
     def model_id(self) -> str:
         """
         Return a friendly identifier for the loaded model. Tries /props's
